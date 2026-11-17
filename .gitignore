@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# the set's problems and run folders are data, kept out of the repository
+problems/
+obs-data/

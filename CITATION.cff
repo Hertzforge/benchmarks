@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this code or the problems it reads, please cite the data set as below."
+type: software
+title: "Hertzforge Open Benchmark Set: Code of the MIMO Random Suite, Version 0.2"
+version: "0.2"
+date-released: "2026-11-17"
+license: MIT
+repository-code: "https://github.com/Hertzforge/benchmarks"
+authors:
+  - family-names: Cross
+    given-names: Kevin
+    orcid: "https://orcid.org/0009-0002-6608-9426"
+preferred-citation:
+  type: dataset
+  title: "Hertzforge Open Benchmark Set: MIMO Random Suite, Version 0.2"
+  version: "0.2"
+  doi: "10.5281/zenodo.24310742"
+  year: 2026
+  publisher:
+    name: Zenodo
+  authors:
+    - family-names: Cross
+      given-names: Kevin
+      orcid: "https://orcid.org/0009-0002-6608-9426"
