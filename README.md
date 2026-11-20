@@ -23,6 +23,8 @@ This repository at tag `v0.2` is identical to the `code/` folder of the set's re
 | `make_problem.py` | Makes a problem folder from an export of the generator |
 | `generator/` | The generator of the frame structures (`obs_gen2.py`), the stager (`stage2.py`), `regenerate.sh`, and the check that refuses a structure the simulator would refuse (`frequency_bound.py`). Needs NumPy, SciPy and cvxpy |
 | `tests/`, `generator/tests/` | The tests; `run_tests.sh` runs them |
+| `results.py` | Checks a reported result and writes its summary table, by the rules the baselines were summarized by. NumPy only |
+| `results/` | Reported results, one folder each, and how to report one (`results/README.md`) |
 | `FORMAT.md` | Every file and field of a problem folder and of a scorecard |
 | `RELEASE_NOTES.md` | What changed in version 0.2, and the checks that nothing but names and paths changed |
 
@@ -55,6 +57,14 @@ control law against the software's simulator. It takes a case file built from a 
 (`reference_model.to_runner_structure` gives the structure object the case file holds) and writes
 the run folder the scorer reads. The version of the runner that reads the problems of this set
 arrives with Hertzforge pull request 324.
+
+## Reporting a Result
+
+Anyone may report a control law's results on a released version of the set; accepted results are
+listed on https://hertzforge.com/benchmarks/results/ beside the baselines. A result is a folder under
+`results/` with the law's scorecards and a short `result.json`, sent as a pull request; the run
+records are deposited where anyone can download them, and every run is scored again before the result
+is listed. Step by step: `results/README.md`.
 
 ## Tests
 
