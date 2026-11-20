@@ -1,0 +1,19 @@
+{
+  "schema": "hertzforge-benchmark-result/0.1",
+  "id": "my-law",
+  "suite": "MIMO Random",
+  "set_version": "0.2",
+  "law": {
+    "name": "My Law",
+    "code_name": "my_law",
+    "parameters": {"all": {}},
+    "frequency_response": "measured once and kept"
+  },
+  "target": "line",
+  "authors": [{"name": "First Author", "orcid": "0000-0000-0000-0000"}],
+  "link": "https://example.org/the-article-or-the-code",
+  "development": "Which problems and seeds the law was developed or tuned on, and which it had never seen before this result.",
+  "run_as_published": true,
+  "run_records": {"url": "https://doi.org/10.5281/zenodo.0000000", "sha256": "the SHA-256 of the archive"},
+  "software": "What ran the law: your own code, or Hertzforge at a named commit, and the runner."
+}
