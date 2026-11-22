@@ -51,6 +51,7 @@ def main():
                          broke=';'.join(f'{k.split("_")[0]}:{v}' for k, v in c['strict']['broke_db_over_limit'].items()),
                          grade=(c['card'] or {}).get('pattern_grade'), classical_band=cl.get('share_in_band_20pct'),
                          classical_516=cl.get('share_all_516'), te_share=(c.get('duration') or {}).get('share_te_0p8_1p2'),
+                         te=(c.get('duration') or {}).get('passed'), te_ratio=(c.get('duration') or {}).get('te_ratio_median'),
                          score=round(run_score(rec), 3), seconds=rec['seconds']))
     with open(os.path.join(a.out, f'{a.name}_runs.csv'), 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
@@ -68,6 +69,7 @@ def main():
                         ends_pm3=mean_of([r['ends_pm3'] for r in g]),
                         level=round(np.mean([r['level'] for r in g]), 3), exposure=round(np.mean([r['exposure'] for r in g]), 3),
                         classical_516_share=mean_of([r['classical_516'] for r in g]), te_share=mean_of([r['te_share'] for r in g]),
+                        te=mean_of([r['te'] for r in g]), te_ratio_median=med([r['te_ratio'] for r in g]),
                         completed=round(np.mean([r['end'] == 'completed' for r in g]), 3),
                         ends_margin_median=med([r['ends_margin'] for r in g]), exposure_median_db=med([r['exposure_db'] for r in g]),
                         score_median=med([r['score'] for r in g]), seconds_median=med([r['seconds'] for r in g])))

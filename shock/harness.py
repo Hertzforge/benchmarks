@@ -222,6 +222,11 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
     eng = EngineLadder(lad, per_level)          # the record's: the law's probes are the first rungs of the engine's table
     am = sm.article_modes(st)
     recs, history = [], []
+    # Effective duration (SRS targets): each control's TE against its target waveform's, both by Method 516.8
+    # Annex A 1.3.2 with the target's crest factor (3 when it gives none)
+    te_cf = float((tg or {}).get('crest_factor') or sm.TE_CREST_FACTOR)
+    te_target = (sm.effective_duration(setup.reference, crest_factor=te_cf)
+                 if tg is not None and tg['kind'] == 'srs' else None)
 
     def measure(d):
         y, lr = sm.play(st, d)
@@ -245,8 +250,10 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
                               largest_drop=float(ch[am].min()), largest_rise=float(ch[am].max()))
         if tg is not None and tg['kind'] != 'srs':
             r['classical'] = classical_band(y, setup.reference, tg, sc)
-        if tg is not None and tg['kind'] == 'srs' and tg.get('effective_duration_s'):
-            r['te_ratio'] = np.round(sm.effective_duration(y) / np.asarray(tg['effective_duration_s']), 4).tolist()
+        if te_target is not None:
+            te = sm.effective_duration(y, crest_factor=te_cf)
+            r['te_s'] = np.round(te, 6).tolist()
+            r['te_ratio'] = np.round(te / te_target, 4).tolist()
         recs.append(r)
         return e
 
@@ -288,4 +295,5 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
     except Exception as ex:
         rep = {'error': str(ex)}
     return dict(problem=setup.info.get('problem'), kind=setup.info.get('kind'), law=law.name, noise=noise, seed=seed,
-                ladder=lad, first_level_db=first_level, records=recs, end=end, ladder_notes=eng.notes, law_report=rep)
+                ladder=lad, first_level_db=first_level, records=recs, end=end, ladder_notes=eng.notes, law_report=rep,
+                **({} if te_target is None else dict(te_target_s=np.round(te_target, 6).tolist(), te_crest_factor=te_cf)))

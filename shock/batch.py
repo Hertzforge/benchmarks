@@ -49,13 +49,14 @@ def one(args):
     t0 = time.time()
     try:
         s, st, tg, meta = hz.load(os.path.join(problems, j['problem']), j['kind'])
-        law = laws.LAWS[j['law']]() if impl is None else __import__('laws_rust').LAWS[j['law']]()
+        rust = impl is not None and j['law'] in __import__('laws_rust').LAWS
+        law = __import__('laws_rust').LAWS[j['law']]() if rust else laws.LAWS[j['law']]()
         r = hz.run(s, st, law, tg, noise=j.get('noise', 1e-3), seed=j.get('seed', 11))
         card = scorer.score_run(r)
         rec = dict(job=j, code_sha256=sha, seconds=round(time.time() - t0, 2), problem_sha256=meta['structure']['sha256'],
                    target_sha256=meta['targets'][j['kind']]['sha256'], stage=meta['stage'], effects=meta['effects'],
                    cls=meta['structure']['cls'], variant=meta['structure']['variant'], run=r, card=card)
-        if impl is not None:
+        if rust:
             rec['implementation'] = impl
         tmp = path + '.tmp'
         json.dump(rec, open(tmp, 'w'), default=float)
@@ -71,8 +72,8 @@ def main():
     ap.add_argument('--workers', type=int, default=8); ap.add_argument('--log', required=True)
     ap.add_argument('--min-free-gb', type=float, default=50.0); ap.add_argument('--name', default='batch')
     ap.add_argument('--rust', action='store_true',
-                    help='followed and followed-hold from the Rust law math (laws_rust.py); the library path, its SHA-256 '
-                         'and the law math commit are written to the log and every run file')
+                    help='followed and followed-hold from the Rust law math (laws_rust.py), the other laws the Python ports; '
+                         'the library path, its SHA-256 and the law math commit go to the log and every Rust run file')
     ap.add_argument('--sds', default=os.path.expanduser('~/dev/sds-mshock-followed-wt'), help='the law math worktree')
     a = ap.parse_args()
     jobs = json.load(open(a.jobs))

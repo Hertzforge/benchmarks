@@ -35,7 +35,8 @@ NAT516 = 1000.0 * 10.0 ** (K516 / 40.0)
 SRS_INNER_DB = (-1.5, 3.0)      # Method 516.8: -1.5/+3 dB on at least 90 % of the points, the rest within -3/+6 dB
 SRS_INNER_SHARE = 0.9
 SRS_OUTER_DB = (-3.0, 6.0)
-TE_FRACTION = 0.1               # effective duration TE: the shortest time holding every sample above 10 % of the peak
+TE_CREST_FACTOR = 3.0           # effective duration TE (Method 516.8 Annex A 1.3.2): the minimum time holding every
+                                # magnitude above APk / CF, CF 3 when the specification gives none (draft 0.2 used 10 %)
 T_PULSE = 0.6                   # the SRS pulse's wavelets start here (s): room before it for the drive's precursor
 TE = 0.06                       # the SRS pulse's effective duration (s)
 T_CLASSICAL = 0.011             # classical pulse duration (s), the 516 functional shock's 11 ms
@@ -104,12 +105,13 @@ def within_516(e):
     return bool(np.all(excess_516(e) <= 0.0))
 
 
-def effective_duration(x, fs=FS, fraction=TE_FRACTION):
-    """TE of each row (s): first to last sample whose magnitude exceeds `fraction` of the row's peak magnitude."""
+def effective_duration(x, fs=FS, crest_factor=TE_CREST_FACTOR):
+    """TE of each row (s), Method 516.8 Annex A 1.3.2: the minimum time containing every time-history magnitude
+    above APk / CF (APk the row's peak magnitude, CF the crest factor, 3 unless given): first to last such sample."""
     x = np.atleast_2d(np.asarray(x, float))
     out = np.empty(x.shape[0])
     for i, r in enumerate(np.abs(x)):
-        k = np.flatnonzero(r > fraction * r.max())
+        k = np.flatnonzero(r > r.max() / crest_factor)
         out[i] = (k[-1] - k[0] + 1) / fs if k.size else 0.0
     return out
 

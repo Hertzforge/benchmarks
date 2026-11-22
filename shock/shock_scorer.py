@@ -24,8 +24,10 @@ No reading is the verdict; each is reported with its margin and, on a miss, the 
   classical (half-sine, sawtooth) on the last full-level pulse, the share of controls inside +/-20 % of the peak over
             the pulse window, with the duration within +/-10 %, the velocity change within +/-20 %, the compensation
             inside +/-20 % of the peak, the sawtooth's post-pulse slope under 10 % of TD, and all of them (516.8)
-  duration  (SRS target) the share of controls whose effective duration is within 0.8 to 1.2 of the target's, on the
-            last full-level pulse
+  duration  (SRS target) on the last full-level pulse, each control's effective duration TE (Method 516.8 Annex A
+            1.3.2: the minimum time holding every magnitude above the peak over the crest factor, 3 unless given)
+            against its target waveform's: passed when every control is within 0.8 to 1.2 (516.8 4.2.2.2), the
+            share of controls within, the median, least and largest ratio; a run with no full-level pulse misses it
 """
 import os
 import sys
@@ -35,7 +37,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import shock_model as sm  # noqa: E402
 
-SCORER_VERSION = 'shock-0.2-draft'
+SCORER_VERSION = 'shock-0.2-draft-te516'
 TOL = 3.0
 LEVEL_DB = 1.5
 LIMIT_DB = 6.0
@@ -85,6 +87,8 @@ def score_run(run):
         out['ends_pm3'] = dict(passed=False, why='no full-level pulse')
         out['level'] = dict(passed=False, why='no full-level pulse')
         out['card'] = None
+        if run.get('kind') == 'srs':
+            out['duration'] = dict(passed=False, why='no full-level pulse')
     else:
         e = np.asarray(lf['errors_db'])
         xc = sm.excess_516(e)
@@ -119,8 +123,11 @@ def score_run(run):
                                     worst_compensation_pct=round(float(cp.max()), 2))
         if lf.get('te_ratio'):
             te = np.asarray(lf['te_ratio'])
-            out['duration'] = dict(share_te_0p8_1p2=round(float(np.mean((te >= 0.8) & (te <= 1.2))), 4),
-                                   te_ratio_min=round(float(te.min()), 3), te_ratio_max=round(float(te.max()), 3))
+            inside = (te >= 0.8) & (te <= 1.2)
+            out['duration'] = dict(passed=bool(np.all(inside)), share_te_0p8_1p2=round(float(np.mean(inside)), 4),
+                                   te_ratio_median=round(float(np.median(te)), 4),
+                                   te_ratio_min=round(float(te.min()), 3), te_ratio_max=round(float(te.max()), 3),
+                                   crest_factor=run.get('te_crest_factor'))
     ex = max([r['abs_db'] for r in R], default=nan)
     out['exposure'] = dict(passed=bool(R) and ex <= TOL, largest_abs_db=round(ex, 3) if R else None,
                            margin_db=round(TOL - ex, 3) if R else None,

@@ -12,7 +12,7 @@ One folder a structure draw, named as the MIMO Random v0.2 folder it is built on
 |---|---|
 | `structure.json` | The Random folder's file, byte for byte (SHA-256 checked against the Random problem's record) |
 | `reference_model.py`, `shock_model.py` | Copies of the code: the level rule in time is `reference_model.simulate_level` |
-| `target_<kind>.json` | One per target kind (`srs`, `half_sine`, `sawtooth`): scale, SRS points (controls x 93, the twelfth-octave centres 10.0 to 1995.3 Hz, Q 10), fine points (the same points), band, peak in g, for `srs` the effective duration TE per control, declared deviation from the specification, the reference file's SHA-256 |
+| `target_<kind>.json` | One per target kind (`srs`, `half_sine`, `sawtooth`): scale, SRS points (controls x 93, the twelfth-octave centres 10.0 to 1995.3 Hz, Q 10), fine points (the same points), band, peak in g, for `srs` the effective duration TE per control (at 10 % of the peak, as generated; the run recomputes the target's TE by 516.8), declared deviation from the specification, the reference file's SHA-256 |
 | `reference_<kind>.f8` | The full-level waveform at each control, (controls, 16384), little-endian float64, m/s^2, 8,192 Hz |
 | `problem.json` | Identity (as Random's), the ladder, the tolerances, the target table with SHA-256, the checks made at generation (highest reachable frequency against 4,096 Hz, the sizing, the state reached at full level and 6 dB over) |
 
@@ -39,7 +39,7 @@ follows the standard:
 | SRS points | third octaves 49.6 to 2000 Hz (17); a twelfth-octave reading beside | twelfth-octave centres 10.0 to 1995.3 Hz (93), base ten; Q 10 unchanged |
 | SRS tolerance (ladder pass, strict criteria 4 and 5, ends) | -3/+3 dB at every point | -1.5/+3 dB on at least 90 % of each control's points, the rest within -3/+6 dB |
 | Secondary SRS reading | | `ends_pm3`: 0.1's -3/+3 dB at every point, labelled |
-| Effective duration (SRS target) | not read | TE within 0.8 to 1.2 of the target's, TE the shortest time holding every sample above 10 % of the peak (a reading; the ladder does not use it) |
+| Effective duration (SRS target) | not read | TE within 0.8 to 1.2 of the target's on every control, TE by Method 516.8 Annex A 1.3.2: the minimum time holding every magnitude above the peak over the crest factor (3 when the target gives none); the target's TE computed the same way from its waveform at run time, each pulse's TE, the ratio and the target's TE saved in the run file (a reading; the ladder does not use it). Draft 0.2's runs before 2026-11-22 used 10 % of the peak and saved only the ratio |
 | Classical duration | not read | width above 10 % of the peak within +/-10 % of the target's |
 | Classical velocity change | within 10 % | within 20 % |
 | Compensation pulses | not read | inside +/-20 % of the peak before and after the pulse |

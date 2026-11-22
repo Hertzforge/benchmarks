@@ -120,8 +120,26 @@ def test_516_srs_tolerance():
 
 
 def test_effective_duration():
-    x = np.zeros((1, 8192)); x[0, 100:200] = 1.0; x[0, 150] = 5.0; x[0, 300] = 0.4    # 0.4 is under 10 % of 5
-    assert abs(sm.effective_duration(x, fs=1000.0)[0] - 0.1) < 1e-12
+    # Method 516.8 Annex A 1.3.2: the minimum time holding every magnitude above APk / CF, CF 3 unless given.
+    # Peak 5 at sample 150 (threshold 5/3); 2.0 over 100 to 199 is above it; -1.7 at 50 is above it in magnitude;
+    # 1.5 at 300 is under it (it was above draft 0.2's 10 %).
+    x = np.zeros((1, 8192)); x[0, 100:200] = 2.0; x[0, 150] = 5.0; x[0, 50] = -1.7; x[0, 300] = 1.5
+    assert abs(sm.effective_duration(x, fs=1000.0)[0] - 0.150) < 1e-12        # samples 50 to 199
+    assert abs(sm.effective_duration(x, fs=1000.0, crest_factor=10.0)[0] - 0.251) < 1e-12   # 50 to 300
+    assert sm.TE_CREST_FACTOR == 3.0
+
+
+def test_duration_reading():
+    ok = [[0.5, -0.5], [1.0, -1.0]]
+    R = [rec(0, -12, ok), rec(1, 0, ok), rec(2, 0, ok), rec(3, 0, ok)]
+    R[-1]['te_ratio'] = [1.0, 1.25]
+    c = scorer.score_run(run_of(R))
+    d = c['duration']
+    assert not d['passed'] and d['share_te_0p8_1p2'] == 0.5 and abs(d['te_ratio_median'] - 1.125) < 1e-12
+    R[-1]['te_ratio'] = [0.85, 1.15]
+    assert scorer.score_run(run_of(R))['duration']['passed']
+    c = scorer.score_run(run_of([rec(0, -12, [[5.0]])], end='not converged'))
+    assert c['duration'] == dict(passed=False, why='no full-level pulse')
 
 
 @pytest.mark.parametrize('shape', ['half_sine', 'sawtooth'])
