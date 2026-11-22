@@ -1,0 +1,20 @@
+[package]
+name = "shock_followed"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The MIMO Shock suite's closed-loop library for the law math's followed and followed-hold (ctypes)."
+
+[lib]
+crate-type = ["cdylib"]
+
+# Its own workspace; the law math by path to the worktree of the sds repository
+# the run files name.
+[workspace]
+
+[dependencies]
+hertzforge-mimo-shock-law-math = { path = "../../../sds-mshock-followed-wt/crates/hertzforge-mimo-shock-law-math" }
+serde_json = "1"
+
+[profile.release]
+debug = false

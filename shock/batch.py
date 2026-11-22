@@ -38,7 +38,7 @@ def run_id(j):
 
 
 def one(args):
-    j, problems, out, sha = args
+    j, problems, out, sha, impl = args
     import numpy as np  # noqa: F401
     import harness as hz
     import laws
@@ -49,11 +49,14 @@ def one(args):
     t0 = time.time()
     try:
         s, st, tg, meta = hz.load(os.path.join(problems, j['problem']), j['kind'])
-        r = hz.run(s, st, laws.LAWS[j['law']](), tg, noise=j.get('noise', 1e-3), seed=j.get('seed', 11))
+        law = laws.LAWS[j['law']]() if impl is None else __import__('laws_rust').LAWS[j['law']]()
+        r = hz.run(s, st, law, tg, noise=j.get('noise', 1e-3), seed=j.get('seed', 11))
         card = scorer.score_run(r)
         rec = dict(job=j, code_sha256=sha, seconds=round(time.time() - t0, 2), problem_sha256=meta['structure']['sha256'],
                    target_sha256=meta['targets'][j['kind']]['sha256'], stage=meta['stage'], effects=meta['effects'],
                    cls=meta['structure']['cls'], variant=meta['structure']['variant'], run=r, card=card)
+        if impl is not None:
+            rec['implementation'] = impl
         tmp = path + '.tmp'
         json.dump(rec, open(tmp, 'w'), default=float)
         os.replace(tmp, path)
@@ -67,12 +70,27 @@ def main():
     ap.add_argument('--jobs', required=True); ap.add_argument('--problems', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--workers', type=int, default=8); ap.add_argument('--log', required=True)
     ap.add_argument('--min-free-gb', type=float, default=50.0); ap.add_argument('--name', default='batch')
+    ap.add_argument('--rust', action='store_true',
+                    help='followed and followed-hold from the Rust law math (laws_rust.py); the library path, its SHA-256 '
+                         'and the law math commit are written to the log and every run file')
+    ap.add_argument('--sds', default=os.path.expanduser('~/dev/sds-mshock-followed-wt'), help='the law math worktree')
     a = ap.parse_args()
     jobs = json.load(open(a.jobs))
     os.makedirs(a.out, exist_ok=True)
     sha = code_sha()
     log = open(a.log, 'a', buffering=1)
+    impl = None
+    if a.rust:
+        import subprocess
+        import laws_rust
+        impl = dict(kind='rust', library=laws_rust.lib_info(),
+                    sds_commit=subprocess.run(['git', '-C', a.sds, 'rev-parse', 'HEAD'], capture_output=True,
+                                              text=True).stdout.strip(),
+                    sds_dirty=bool(subprocess.run(['git', '-C', a.sds, 'status', '--porcelain'], capture_output=True,
+                                                  text=True).stdout.strip()))
     log.write(f"BATCH START {a.name}: {len(jobs)} jobs, {a.workers} workers, code {sha[:12]}, {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    if impl is not None:
+        log.write(f"IMPLEMENTATION {json.dumps(impl)}\n")
     done = failed = skipped = 0
     stopped = ''
     from multiprocessing import get_context
@@ -80,7 +98,7 @@ def main():
         with get_context('spawn').Pool(a.workers, maxtasksperchild=20) as pool:
             pending = []
             it = iter(jobs)
-            for res in pool.imap_unordered(one, ((j, a.problems, a.out, sha) for j in it), chunksize=1):
+            for res in pool.imap_unordered(one, ((j, a.problems, a.out, sha, impl) for j in it), chunksize=1):
                 rid, status, sec = res
                 if status == 'done':
                     done += 1
