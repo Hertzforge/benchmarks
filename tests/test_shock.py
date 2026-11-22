@@ -79,7 +79,8 @@ def test_readings_clean_run():
     R = [rec(0, -12, ok), rec(1, -6, ok), rec(2, 0, ok), rec(3, 0, ok), rec(4, 0, ok)]
     c = scorer.score_run(run_of(R))
     assert c['strict']['passed'] and c['ends']['passed'] and c['level']['passed'] and c['exposure']['passed']
-    assert c['card']['pattern_grade'] == 'A' and abs(c['ends']['margin_db'] - 2.0) < 1e-9
+    assert c['card']['pattern_grade'] == 'A' and abs(c['ends']['margin_db'] - 0.5) < 1e-9
+    assert c['ends_pm3']['passed'] and abs(c['ends_pm3']['margin_db'] - 2.0) < 1e-9
 
 
 def test_readings_disagree_on_purpose():
@@ -102,3 +103,34 @@ def test_readings_disagree_on_purpose():
 def test_no_full_level():
     c = scorer.score_run(run_of([rec(0, -12, [[5.0]])], end='not converged'))
     assert not c['ends']['passed'] and not c['level']['passed'] and c['card'] is None
+
+
+def test_516_srs_tolerance():
+    # Method 516.8: -1.5/+3 dB on at least 90 % of the points, the rest within -3/+6 dB
+    e = np.zeros((1, 20))
+    e[0, :2] = 5.0                                        # 10 % of the points at +5: inside, by 1 dB (the outer bound)
+    assert sm.within_516(e) and abs(sm.excess_516(e)[0] + 1.0) < 1e-12
+    e[0, 2] = 5.0                                         # 15 %: the point at the 90 % share is 2 dB over +3
+    assert not sm.within_516(e) and abs(sm.excess_516(e)[0] - 2.0) < 1e-12
+    e = np.zeros((1, 20)); e[0, 0] = 7.0                  # one point over +6: out by 1 dB
+    assert abs(sm.excess_516(e)[0] - 1.0) < 1e-12
+    assert not sm.within_516(np.full((1, 20), -2.0))      # asymmetric: -2 dB everywhere is out (the old +/-3 passed it)
+    assert sm.within_516(np.full((1, 20), 2.9))
+    assert sm.NAT516.size == 93 and abs(sm.NAT516[0] - 10.0) < 1e-9 and abs(sm.NAT516[-1] - 1995.262) < 1e-3
+
+
+def test_effective_duration():
+    x = np.zeros((1, 8192)); x[0, 100:200] = 1.0; x[0, 150] = 5.0; x[0, 300] = 0.4    # 0.4 is under 10 % of 5
+    assert abs(sm.effective_duration(x, fs=1000.0)[0] - 0.1) < 1e-12
+
+
+@pytest.mark.parametrize('shape', ['half_sine', 'sawtooth'])
+def test_classical_reading_of_the_pulse_itself(shape):
+    import harness as hz
+    w, _, _ = sm.classical(shape)
+    y = np.tile(w, (2, 1))
+    r = hz.classical_band(y, y, dict(kind=shape, scale=1.0), 1.0)
+    assert max(r['band_pct']) == 0 and max(map(abs, r['duration_pct'])) == 0 and max(map(abs, r['velocity_pct'])) == 0
+    assert max(r['compensation_pct']) < 20.0              # the pulse's own compensation is inside the baseline band
+    if shape == 'sawtooth':
+        assert 7.5 < r['post_slope_pct'][0] < 10.0        # the 10 % TD return reaches 0.2 A at 8 % TD

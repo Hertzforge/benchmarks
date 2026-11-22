@@ -1,4 +1,4 @@
-"""Make MIMO Shock problems (draft 0.1) on the MIMO Random suite's structures.
+"""Make MIMO Shock problems (draft 0.2) on the MIMO Random suite's structures.
 
     python shock/make_shock_problem.py --random <folder of the Random set's problems> --out <problems folder> \
         --structures frame-6x6-realistic_s00,frame-12x6-strong_s01 [--targets srs,half_sine,sawtooth]
@@ -35,17 +35,29 @@ sys.path.insert(0, HERE)
 import shock_model as sm  # noqa: E402
 rm = sm.rm
 
-FORMAT = '0.1-draft'
-SCHEMA = 'hertzforge-benchmark-shock-problem/0.1-draft'
+FORMAT = '0.2-draft'
+SCHEMA = 'hertzforge-benchmark-shock-problem/0.2-draft'
 LADDER = dict(table_db=[-12.0, -9.0, -6.0, -3.0, -1.5, 0.0], pulses_a_level=6, passes_at_full=3,
-              tolerance_db=[-3.0, 3.0], min_step_db=0.75, max_pulses=60,
-              what="the shock record's engine ladder: a level is left on a passing pulse (every SRS point of every "
-                   "control within -3/+3 dB); six pulses a level without a pass ends the run; three passes at full level")
-TOL = dict(srs_db=[-3.0, 3.0], level_mean_db=1.5, limit_line_db=6.0, band_516_pct=20.0, velocity_pct=10.0,
-           what='SRS within -3/+3 dB at every third-octave point (the shock record). The Level reading: mean SRS error '
-                'within 1.5 dB and no point over +6 dB (the acceptance proposal). Classical pulses also: the waveform '
-                'inside +/-20 % of the peak around the ideal pulse over its window and the velocity change within '
-                '10 % (the 516 classical tolerance form as the lead recalls it; not checked against the standard text)')
+              tolerance_db=dict(inner=list(sm.SRS_INNER_DB), inner_share=sm.SRS_INNER_SHARE, outer=list(sm.SRS_OUTER_DB)),
+              predicted_over_limit_db=sm.SRS_INNER_DB[1], min_step_db=0.75, max_pulses=60,
+              what="the shock record's engine ladder: a level is left on a passing pulse (every control's SRS inside "
+                   "Method 516.8's tolerance: -1.5/+3 dB on at least 90 % of its points, every point within -3/+6 dB); "
+                   "a step is halved while the predicted worst point is over +3 dB; six pulses a level without a pass "
+                   "ends the run; three passes at full level")
+TOL = dict(srs_db=dict(inner=list(sm.SRS_INNER_DB), inner_share=sm.SRS_INNER_SHARE, outer=list(sm.SRS_OUTER_DB)),
+           srs_db_secondary=[-3.0, 3.0], effective_duration=[0.8, 1.2], level_mean_db=1.5, limit_line_db=6.0,
+           band_516_pct=20.0, duration_pct=10.0, velocity_pct=20.0, compensation_pct=20.0, post_slope_pct_td=10.0,
+           what='MIL-STD-810H Method 516.8 (checked 2026-11-22, Method_516_Tolerances_Check_2026-11-22.md): the SRS at '
+                'the twelfth-octave centres 10 to 1995 Hz, Q 10, within -1.5/+3 dB on at least 90 % of the points of '
+                'each control and every point within -3/+6 dB; the SRS target also its effective duration TE (the '
+                'shortest time holding every sample above 10 % of the peak) within 0.8 to 1.2 of the target\'s. '
+                'Secondary, labelled: every point within -3/+3 dB (draft 0.1\'s reading, the shock record\'s). The '
+                'Level reading: mean SRS error within 1.5 dB and no point over +6 dB (the acceptance proposal). '
+                'Classical pulses: the waveform inside +/-20 % of the peak around the target over the pulse window, '
+                'the duration (width above 10 % of the peak) within +/-10 % of the target\'s, the velocity change '
+                'over the pulse within +/-20 % of the target\'s, the compensation (before and after the pulse) inside '
+                '+/-20 % of the peak, and for the sawtooth the post-pulse slope (terminal peak to inside 20 % of the '
+                'peak) under 10 % of TD')
 
 
 def sha(path):
@@ -57,21 +69,21 @@ def sha(path):
 
 
 def unit_target(kind, st, seed):
-    """(reference (controls, N) at unit scale, points (controls, 17), fine points (controls, 65), band, extra)."""
+    """(reference (controls, N) at unit scale, points (controls, 93), fine points (the same points), band, extra)."""
     nc = len(sm.controls(st))
     if kind == 'srs':
         w, syn = sm.synth_srs_pulse(seed)
-        pts = np.tile(sm.srs(w, sm.FS, sm.NAT3)[0], (nc, 1))      # the waveform's own SRS: the reference meets its target
-        fine = np.tile(sm.srs(w, sm.FS, sm.NAT12)[0], (nc, 1))
-        dev = sm.error_db(pts[0], sm.srs_shape(sm.NAT3))
+        pts = np.tile(sm.srs(w, sm.FS, sm.NAT516)[0], (nc, 1))      # the waveform's own SRS: the reference meets its target
+        fine = np.tile(sm.srs(w, sm.FS, sm.NAT516)[0], (nc, 1))
+        dev = sm.error_db(pts[0], sm.srs_shape(sm.NAT516))[sm.NAT516 >= 50.0]   # the shape is specified from 50 Hz
         extra = dict(synthesis_rms_db=syn, synthesis_vs_shape_db=[float(dev.min()), float(dev.max())],
                      shape='+6 dB an octave 50 to 100 Hz, flat above', polarity='in phase',
                      points_are="the synthesized waveform's own SRS (so the reference itself is inside the tolerance)")
         band = sm.BAND_SRS
     else:
         w, ideal, win = sm.classical(kind)
-        pts = np.tile(sm.srs(w, sm.FS, sm.NAT3)[0], (nc, 1))
-        fine = np.tile(sm.srs(w, sm.FS, sm.NAT12)[0], (nc, 1))
+        pts = np.tile(sm.srs(w, sm.FS, sm.NAT516)[0], (nc, 1))
+        fine = np.tile(sm.srs(w, sm.FS, sm.NAT516)[0], (nc, 1))
         extra = dict(duration_s=sm.T_CLASSICAL, window_s=list(win), compensation=f'pre and post half-sines of {sm.COMP_FACTOR:g} '
                      'times the duration, amplitudes solved for zero end velocity and displacement',
                      ideal_peak=1.0, velocity_change=float(np.sum(ideal) / sm.FS))
@@ -162,8 +174,8 @@ def make(random_root, out_root, sid, kinds, linear_scale_from=None):
         # departure from it is the declared deviation.
         spec_pts = pts_u
         ref_u = np.fft.irfft(np.einsum('lcd,dl->cl', H, np.fft.rfft(d_u, axis=1)), n=sm.N, axis=1)
-        pts_u = sm.srs(ref_u, sm.FS, sm.NAT3)
-        fine_u = sm.srs(ref_u, sm.FS, sm.NAT12)
+        pts_u = sm.srs(ref_u, sm.FS, sm.NAT516)
+        fine_u = sm.srs(ref_u, sm.FS, sm.NAT516)
         dd = sm.error_db(pts_u, spec_pts)
         extra = dict(extra, declared_deviation_db=dict(min=float(dd.min()), max=float(dd.max()),
                      rms=float(np.sqrt(np.mean(dd ** 2))), what='SRS of the projected target over the specification'))
@@ -182,12 +194,13 @@ def make(random_root, out_root, sid, kinds, linear_scale_from=None):
         pts, fine = pts_u * s, fine_u * s
         assert np.all(np.isfinite(pts)) and np.all(pts > 0)
         ref = ref_u * s
-        e0 = sm.error_db(sm.srs(y0, sm.FS, sm.NAT3), pts)
+        e0 = sm.error_db(sm.srs(y0, sm.FS, sm.NAT516), pts)
         np.asarray(ref, '<f8').tofile(os.path.join(folder, f'reference_{kind}.f8'))
-        tgt = dict(schema='hertzforge-benchmark-shock-target/0.1-draft', kind=kind, scale=s, units='m/s^2',
+        tgt = dict(schema='hertzforge-benchmark-shock-target/0.2-draft', kind=kind, scale=s, units='m/s^2',
                    reference=dict(file=f'reference_{kind}.f8', sha256=sha(os.path.join(folder, f'reference_{kind}.f8')),
                                   shape=list(ref.shape), dtype='<f8', what='full-level waveform at each control'),
-                   natural_hz=sm.NAT3.tolist(), q=sm.Q, points=pts.tolist(), fine_natural_hz=sm.NAT12.tolist(),
+                   natural_hz=sm.NAT516.tolist(), q=sm.Q, points=pts.tolist(), fine_natural_hz=sm.NAT516.tolist(),
+                   effective_duration_s=sm.effective_duration(ref).round(6).tolist() if kind == 'srs' else None,
                    fine_points=fine.tolist(), band_hz=list(band), peak_g=float(np.abs(ref).max() / 9.80665), **extra)
         put = os.path.join(folder, f'target_{kind}.json')
         json.dump(tgt, open(put, 'w'), indent=1)
@@ -203,7 +216,7 @@ def make(random_root, out_root, sid, kinds, linear_scale_from=None):
                 structure=dict({k: rp['structure'][k] for k in ('id', 'seed', 'variant', 'level_word', 'cls', 'controls', 'drives', 'modes')},
                                file='structure.json', sha256=sha(os.path.join(folder, 'structure.json')),
                                same_as='the MIMO Random suite, version 0.2, folder ' + sid),
-                grid=dict(fs_hz=sm.FS, n=sm.N, srs_points='third octaves 49.6 to 2000 Hz (17)', fine_points='twelfth octaves (65)', q=sm.Q),
+                grid=dict(fs_hz=sm.FS, n=sm.N, srs_points='twelfth-octave centres 1000 10^(k/40), k = -80 to 12: 10.0 to 1995.3 Hz (93), Method 516.8', fine_points='the same points (draft 0.1 kept a separate twelfth-octave reading; it is now the main one)', q=sm.Q),
                 level_rule_in_time="reference_model.simulate_level: the structure's own rule, each mode's peak follower of "
                                    "its running amplitude (decay exp(-1) in decay_cycles periods), from rest at each pulse",
                 given_to_the_law=['the small-signal frequency response at the controls (reference_model.discrete_frf at r = 0, '

@@ -1,4 +1,4 @@
-"""The MIMO Shock suite, draft 0.1: pulses, targets, the SRS and the level rule in time. NumPy only.
+"""The MIMO Shock suite, draft 0.2: pulses, targets, the SRS and the level rule in time. NumPy only.
 
 The structure is a MIMO Random structure (`structure.json` of version 0.2 of the set, byte for byte) and the level
 rule is the one `reference_model.simulate_level` steps: per sample, each mode's amplitude sqrt(q^2 + (v/w)^2) feeds
@@ -9,7 +9,7 @@ pulse the envelope follows the mode's running amplitude, so the structure soften
 recovers over about `decay_cycles` periods after the response dies down. Each pulse starts from rest.
 
 A pulse is one record of N samples at FS. A target is the full-level reference waveform at every control and its
-SRS (maximax absolute acceleration, Q = 10) on third-octave points; the ladder plays it at a level (dB) as the
+SRS (maximax absolute acceleration, Q = 10) at the twelfth-octave centres 10 to 1995 Hz (Method 516.8); the ladder plays it at a level (dB) as the
 reference times 10^(level / 20).
 """
 import os
@@ -30,6 +30,12 @@ K3 = np.arange(-13, 4)          # third-octave points 1000 2^(k/3): 49.6 Hz to 2
 NAT3 = 1000.0 * 2.0 ** (K3 / 3.0)
 K12 = np.arange(-52, 13)        # twelfth-octave points over the same span (the record's fine reading), 65 points
 NAT12 = 1000.0 * 2.0 ** (K12 / 12.0)
+K516 = np.arange(-80, 13)       # draft 0.2: twelfth-octave centres 1000 10^(k/40) (base ten), 10.0 Hz to 1995.3 Hz, 93 points
+NAT516 = 1000.0 * 10.0 ** (K516 / 40.0)
+SRS_INNER_DB = (-1.5, 3.0)      # Method 516.8: -1.5/+3 dB on at least 90 % of the points, the rest within -3/+6 dB
+SRS_INNER_SHARE = 0.9
+SRS_OUTER_DB = (-3.0, 6.0)
+TE_FRACTION = 0.1               # effective duration TE: the shortest time holding every sample above 10 % of the peak
 T_PULSE = 0.6                   # the SRS pulse's wavelets start here (s): room before it for the drive's precursor
 TE = 0.06                       # the SRS pulse's effective duration (s)
 T_CLASSICAL = 0.011             # classical pulse duration (s), the 516 functional shock's 11 ms
@@ -79,6 +85,33 @@ def error_db(measured, target):
     m, t = np.asarray(measured, float), np.asarray(target, float)
     with np.errstate(divide='ignore', invalid='ignore'):
         return np.where((m > 0) & (t > 0), 20 * np.log10(m / t), -400.0)
+
+
+def excess_516(e):
+    """Per control (rows of SRS errors in dB), how far its errors are outside Method 516.8's SRS tolerance, dB: the
+    larger of (a) the inner-band excess of the point at the 90 % share (every point ranked by its excess over
+    -1.5/+3 dB; at least 90 % must be inside) and (b) the largest excess over -3/+6 dB. At or below 0 is inside;
+    negative is the margin."""
+    e = np.atleast_2d(np.asarray(e, float))
+    lo, hi = SRS_INNER_DB
+    d_in = np.sort(np.maximum(e - hi, lo - e), axis=1)
+    k = int(np.ceil(SRS_INNER_SHARE * e.shape[1] - 1e-9)) - 1
+    d_out = np.max(np.maximum(e - SRS_OUTER_DB[1], SRS_OUTER_DB[0] - e), axis=1)
+    return np.maximum(d_in[:, k], d_out)
+
+
+def within_516(e):
+    return bool(np.all(excess_516(e) <= 0.0))
+
+
+def effective_duration(x, fs=FS, fraction=TE_FRACTION):
+    """TE of each row (s): first to last sample whose magnitude exceeds `fraction` of the row's peak magnitude."""
+    x = np.atleast_2d(np.asarray(x, float))
+    out = np.empty(x.shape[0])
+    for i, r in enumerate(np.abs(x)):
+        k = np.flatnonzero(r > fraction * r.max())
+        out[i] = (k[-1] - k[0] + 1) / fs if k.size else 0.0
+    return out
 
 
 # ---------------------------------------------------------------------------------------------- pulses

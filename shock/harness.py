@@ -5,7 +5,8 @@ restated on the shock suite's structures. NumPy only (the laws may need more).
     result = run(setup, law, noise=1e-3, seed=11)
 
 The ladder is the record's engine ladder (EngineLadder below, ported line for line from the record's harness, engine mode): a
-level is left only on a passing pulse (every SRS point of every control within -3/+3 dB); six pulses at a level
+level is left only on a passing pulse (draft 0.2: every control's SRS inside Method 516.8's tolerance, -1.5/+3 dB on
+at least 90 % of its points and every point within -3/+6 dB; draft 0.1 had every point within -3/+3 dB); six pulses at a level
 without a pass end the run "not converged"; full level needs three passes; before a step up the first pulse's
 over-test at the next level is predicted from the first pulses so far and the step halved, down to 0.75 dB, while
 the prediction is over 3 dB. A law's probes (levels below the first ladder level) are the first rungs of that
@@ -25,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import shock_model as sm  # noqa: E402
 
-TOL = 3.0
+TOL = 3.0                       # the predicted over-test a step is halved against (the upper inner bound, +3 dB)
 MIN_STEP_DB = 0.75
 
 
@@ -159,21 +160,55 @@ class Law:
 
 
 def classical_band(y, ref, tg, scale):
-    """The 516 classical reading of each control's response (rows, samples) at `scale`: the largest departure from
-    the target waveform (the projected compensated pulse, `ref` at full level) over the pulse window widened by 20 %
-    each side, in percent of the specification's peak, and the velocity change over the window against the
-    target's, in percent."""
+    """Method 516.8's classical reading of each control's response (rows, samples) at `scale`, against the target
+    waveform (the projected compensated pulse, `ref` at full level), A the specification's peak at the level:
+      band_pct       the largest departure from the target over the pulse window widened by 20 % each side, % of A
+      duration_pct   the pulse's width above 10 % of its peak against the target's, % (TD within +/-10 %)
+      velocity_pct   the velocity change over the pulse window against the target's, % (within +/-20 %)
+      compensation_pct  the largest magnitude before and after the widened window over the compensation pulses'
+                     span (COMP_FACTOR x TD each side), % of A (inside the +/-20 % baseline band)
+      post_slope_pct (sawtooth) the time from the terminal peak to inside 20 % of A, % of TD (under 10 %)"""
     if tg['kind'] == 'srs':
         return None
     _, _, (a0, a1) = sm.classical(tg['kind'])
     s = tg['scale'] * scale
     t = np.arange(y.shape[1]) / sm.FS
-    win = (t >= a0 - 0.2 * (a1 - a0)) & (t <= a1 + 0.2 * (a1 - a0))
+    w = a1 - a0
+    win = (t >= a0 - 0.2 * w) & (t <= a1 + 0.2 * w)
     dev = np.max(np.abs(y[:, win] - scale * ref[:, win]), axis=1) / s * 100.0
     m = (t >= a0) & (t <= a1)
     v = np.sum(y[:, m], axis=1)
     v0 = scale * np.sum(ref[:, m], axis=1)
-    return dict(band_pct=[round(float(x), 2) for x in dev], velocity_pct=[round(float(x), 2) for x in 100 * (v / v0 - 1)])
+    tc = sm.COMP_FACTOR * sm.T_CLASSICAL
+    comp = ((t >= a0 - tc) & (t < a0 - 0.2 * w)) | ((t > a1 + 0.2 * w) & (t <= a1 + tc))
+    cmp_pct = np.max(np.abs(y[:, comp]), axis=1) / s * 100.0
+
+    def width(x):
+        k0 = np.flatnonzero(win)[0] + int(np.argmax(x[win]))
+        thr = 0.1 * x[k0]
+        lo = k0
+        while lo > 0 and x[lo - 1] > thr:
+            lo -= 1
+        hi = k0
+        while hi < x.size - 1 and x[hi + 1] > thr:
+            hi += 1
+        return (hi - lo + 1) / sm.FS, k0
+
+    dur, post = [], []
+    for i in range(y.shape[0]):
+        wy, ky = width(y[i])
+        wr, _ = width(scale * ref[i])
+        dur.append(100 * (wy / wr - 1))
+        if tg['kind'] == 'sawtooth':
+            k = ky
+            while k < y.shape[1] - 1 and y[i, k] > 0.2 * s:
+                k += 1
+            post.append(100 * (k - ky) / sm.FS / sm.T_CLASSICAL)
+    out = dict(band_pct=[round(float(x), 2) for x in dev], velocity_pct=[round(float(x), 2) for x in 100 * (v / v0 - 1)],
+               duration_pct=[round(float(x), 2) for x in dur], compensation_pct=[round(float(x), 2) for x in cmp_pct])
+    if post:
+        out['post_slope_pct'] = [round(float(x), 2) for x in post]
+    return out
 
 
 def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, -3.0, -1.5, 0.0), per_level=6,
@@ -197,9 +232,11 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
     def record(kind, level, d, y, lr, law_s):
         sc = 10 ** (level / 20)
         e = sm.error_db(sm.srs(y, setup.fs, setup.natural_hz, setup.q, sc), setup.points)
-        e12 = sm.error_db(sm.srs(y, setup.fs, setup.fine_natural_hz, setup.q, sc), setup.fine_points)
+        same = setup.fine_natural_hz.shape == setup.natural_hz.shape and np.array_equal(setup.fine_natural_hz, setup.natural_hz)
+        e12 = e if same else sm.error_db(sm.srs(y, setup.fs, setup.fine_natural_hz, setup.q, sc), setup.fine_points)
         r = dict(index=len(recs), kind=kind, level_db=float(level), over_db=float(e.max()), worst_db=float(np.abs(e).max()),
-                 abs_db=float(level + e.max()), over12_db=float(e12.max()), errors_db=np.round(e, 2).tolist(),
+                 abs_db=float(level + e.max()), over12_db=float(e12.max()), excess516_db=float(sm.excess_516(e).max()),
+                 errors_db=np.round(e, 2).tolist(),
                  drive_rms=float(np.sqrt(np.mean(d ** 2)) / sc), drive_peak=float(np.abs(d).max()), law_s=law_s)
         if st.rules is not None:
             rr = lr.peak_envelope / st.reference_amplitude
@@ -208,6 +245,8 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
                               largest_drop=float(ch[am].min()), largest_rise=float(ch[am].max()))
         if tg is not None and tg['kind'] != 'srs':
             r['classical'] = classical_band(y, setup.reference, tg, sc)
+        if tg is not None and tg['kind'] == 'srs' and tg.get('effective_duration_s'):
+            r['te_ratio'] = np.round(sm.effective_duration(y) / np.asarray(tg['effective_duration_s']), 4).tolist()
         recs.append(r)
         return e
 
@@ -225,7 +264,7 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
             kind = 'probe' if level < first_level - 1e-9 else 'pulse'
             e = record(kind, level, d, y, lr, law_s)
             history.append(recs[-1])
-            tick = eng.on_judged(bool(np.all((e >= -TOL) & (e <= TOL))), float(e.max()))
+            tick = eng.on_judged(sm.within_516(e), float(e.max()))
             planned = eng.level if tick in ('held', 'advanced') else None
             if tick == 'not converged':
                 end = 'not converged'

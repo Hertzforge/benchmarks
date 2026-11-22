@@ -44,11 +44,13 @@ def main():
         cl = c.get('classical') or {}
         rows.append(dict(problem=j['problem'], kind=j['kind'], law=j['law'], cls=cls, tier=rec['variant'], end=c['end'],
                          pulses=c['pulses'], strict=c['strict']['passed'], ends=c['ends']['passed'],
-                         ends_margin=c['ends'].get('margin_db'), level=c['level']['passed'],
+                         ends_margin=c['ends'].get('margin_db'), ends_pm3=(c.get('ends_pm3') or {}).get('passed'),
+                         level=c['level']['passed'],
                          level_mean=c['level'].get('mean_db'), exposure=c['exposure']['passed'],
                          exposure_db=c['exposure']['largest_abs_db'], first_over=c['first_pulse_over_db'],
                          broke=';'.join(f'{k.split("_")[0]}:{v}' for k, v in c['strict']['broke_db_over_limit'].items()),
                          grade=(c['card'] or {}).get('pattern_grade'), classical_band=cl.get('share_in_band_20pct'),
+                         classical_516=cl.get('share_all_516'), te_share=(c.get('duration') or {}).get('share_te_0p8_1p2'),
                          score=round(run_score(rec), 3), seconds=rec['seconds']))
     with open(os.path.join(a.out, f'{a.name}_runs.csv'), 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
@@ -56,12 +58,16 @@ def main():
     for r in rows:
         for key in ((r['law'], r['cls'], r['tier'], r['kind']), (r['law'], r['cls'], r['tier'], 'all'), (r['law'], 'all', 'all', 'all')):
             groups[key].append(r)
+    mean_of = lambda xs: (round(float(np.mean([float(x) for x in xs if x is not None])), 3)
+                          if any(x is not None for x in xs) else None)
     med = lambda xs: (round(float(np.median([x for x in xs if x is not None])), 3) if any(x is not None for x in xs) else None)
     out = []
     for (law, cls, tier, kind), g in sorted(groups.items()):
         out.append(dict(law=law, cls=cls, tier=tier, kind=kind, runs=len(g),
                         strict=round(np.mean([r['strict'] for r in g]), 3), ends=round(np.mean([r['ends'] for r in g]), 3),
+                        ends_pm3=mean_of([r['ends_pm3'] for r in g]),
                         level=round(np.mean([r['level'] for r in g]), 3), exposure=round(np.mean([r['exposure'] for r in g]), 3),
+                        classical_516_share=mean_of([r['classical_516'] for r in g]), te_share=mean_of([r['te_share'] for r in g]),
                         completed=round(np.mean([r['end'] == 'completed' for r in g]), 3),
                         ends_margin_median=med([r['ends_margin'] for r in g]), exposure_median_db=med([r['exposure_db'] for r in g]),
                         score_median=med([r['score'] for r in g]), seconds_median=med([r['seconds'] for r in g])))
