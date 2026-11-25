@@ -1,21 +1,27 @@
 """followed and followed-hold from the Rust law math (hertzforge-mimo-shock-law-math, followed.rs) through the
 closed-loop library in followed_rs/ (ctypes), as harness.Law, pulse by pulse.
 
-    SHOCK_FOLLOWED_LIB=<path to libshock_followed.dylib>   (default: the worktree's build folder)
+    cargo build --release --manifest-path shock/followed_rs/Cargo.toml   # fetches the law math from Hertzforge
+    SHOCK_FOLLOWED_LIB=<path to the library>   (default: followed_rs/target/release/, cargo's own build folder)
 
 The setup is the harness's: the identification `frf`, trusted on the drive band (so the law's drive mask is the
-harness's); probes at -40 and -34 dB, as the Python ports'. lib_info() gives the library's path and SHA-256.
+harness's); probes at -40 and -34 dB, as the Python ports'. lib_info() gives the library's path and SHA-256;
+law_math_commit() the Hertzforge commit of the law math, as followed_rs/Cargo.lock pins it.
 """
 import ctypes as C
 import hashlib
 import json
 import os
+import re
+import sys
 
 import numpy as np
 
 from harness import Law
 
-DEFAULT_LIB = os.path.expanduser('~/dev/target.noindex/sds-mshock-followed-wt/release/libshock_followed.dylib')
+HERE = os.path.dirname(os.path.abspath(__file__))
+LIB_FILE = {'darwin': 'libshock_followed.dylib', 'win32': 'shock_followed.dll'}.get(sys.platform, 'libshock_followed.so')
+DEFAULT_LIB = os.path.join(HERE, 'followed_rs', 'target', 'release', LIB_FILE)
 _lib = None
 P = C.POINTER(C.c_double)
 
@@ -27,6 +33,13 @@ def lib_path():
 def lib_info():
     p = lib_path()
     return dict(path=p, sha256=hashlib.sha256(open(p, 'rb').read()).hexdigest())
+
+
+def law_math_commit():
+    """The commit of hertzforge-mimo-shock-law-math in followed_rs/Cargo.lock (its git source)."""
+    lock = open(os.path.join(HERE, 'followed_rs', 'Cargo.lock')).read()
+    m = re.search(r'name = "hertzforge-mimo-shock-law-math"\nversion = "[^"]+"\nsource = "git\+[^"#]+#([0-9a-f]{40})"', lock)
+    return m.group(1) if m else ''
 
 
 def lib():

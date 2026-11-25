@@ -309,11 +309,13 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hertzforge-dsp"
-version = "0.1.9"
+version = "0.1.24"
+source = "git+https://github.com/hertzforge/hertzforge?rev=6d6e1758f68130dd52f645c75390d369926c7f2a#6d6e1758f68130dd52f645c75390d369926c7f2a"
 
 [[package]]
 name = "hertzforge-mimo-shock-law-math"
-version = "0.1.9"
+version = "0.1.24"
+source = "git+https://github.com/hertzforge/hertzforge?rev=6d6e1758f68130dd52f645c75390d369926c7f2a#6d6e1758f68130dd52f645c75390d369926c7f2a"
 dependencies = [
  "hertzforge-dsp",
  "hertzforge-sdm",
@@ -321,7 +323,8 @@ dependencies = [
 
 [[package]]
 name = "hertzforge-sdm"
-version = "0.1.9"
+version = "0.1.24"
+source = "git+https://github.com/hertzforge/hertzforge?rev=6d6e1758f68130dd52f645c75390d369926c7f2a#6d6e1758f68130dd52f645c75390d369926c7f2a"
 dependencies = [
  "faer",
  "num-complex",

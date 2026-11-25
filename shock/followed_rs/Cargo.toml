@@ -8,12 +8,11 @@ description = "The MIMO Shock suite's closed-loop library for the law math's fol
 [lib]
 crate-type = ["cdylib"]
 
-# Its own workspace; the law math by path to the worktree of the sds repository
-# the run files name.
+# Its own workspace; the law math from Hertzforge at the main branch's merge commit.
 [workspace]
 
 [dependencies]
-hertzforge-mimo-shock-law-math = { path = "../../../sds-mshock-followed-wt/crates/hertzforge-mimo-shock-law-math" }
+hertzforge-mimo-shock-law-math = { git = "https://github.com/hertzforge/hertzforge", rev = "6d6e1758f68130dd52f645c75390d369926c7f2a" }
 serde_json = "1"
 
 [profile.release]

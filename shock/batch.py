@@ -74,7 +74,6 @@ def main():
     ap.add_argument('--rust', action='store_true',
                     help='followed and followed-hold from the Rust law math (laws_rust.py), the other laws the Python ports; '
                          'the library path, its SHA-256 and the law math commit go to the log and every Rust run file')
-    ap.add_argument('--sds', default=os.path.expanduser('~/dev/sds-mshock-followed-wt'), help='the law math worktree')
     a = ap.parse_args()
     jobs = json.load(open(a.jobs))
     os.makedirs(a.out, exist_ok=True)
@@ -82,13 +81,8 @@ def main():
     log = open(a.log, 'a', buffering=1)
     impl = None
     if a.rust:
-        import subprocess
         import laws_rust
-        impl = dict(kind='rust', library=laws_rust.lib_info(),
-                    sds_commit=subprocess.run(['git', '-C', a.sds, 'rev-parse', 'HEAD'], capture_output=True,
-                                              text=True).stdout.strip(),
-                    sds_dirty=bool(subprocess.run(['git', '-C', a.sds, 'status', '--porcelain'], capture_output=True,
-                                                  text=True).stdout.strip()))
+        impl = dict(kind='rust', library=laws_rust.lib_info(), sds_commit=laws_rust.law_math_commit(), sds_dirty=False)
     log.write(f"BATCH START {a.name}: {len(jobs)} jobs, {a.workers} workers, code {sha[:12]}, {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     if impl is not None:
         log.write(f"IMPLEMENTATION {json.dumps(impl)}\n")

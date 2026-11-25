@@ -1,16 +1,16 @@
-"""Run a control law through a MIMO Shock problem's ladder: the shock record's harness (mshock_gym.harness, campaign 6)
-restated on the shock suite's structures. NumPy only (the laws may need more).
+"""Run a control law through a MIMO Shock problem's ladder: the harness of an earlier, unpublished
+simulation study of these laws, restated on the shock suite's structures. NumPy only (the laws may need more).
 
     setup = load(problem_folder, 'srs')
     result = run(setup, law, noise=1e-3, seed=11)
 
-The ladder is the record's engine ladder (EngineLadder below, ported line for line from the record's harness, engine mode): a
+The ladder is that study's engine ladder (EngineLadder below, ported line for line from its harness, engine mode): a
 level is left only on a passing pulse (draft 0.2: every control's SRS inside Method 516.8's tolerance, -1.5/+3 dB on
 at least 90 % of its points and every point within -3/+6 dB; draft 0.1 had every point within -3/+3 dB); six pulses at a level
 without a pass end the run "not converged"; full level needs three passes; before a step up the first pulse's
 over-test at the next level is predicted from the first pulses so far and the step halved, down to 0.75 dB, while
 the prediction is over 3 dB. A law's probes (levels below the first ladder level) are the first rungs of that
-table, as the record's harness had them, and are recorded as probes. Every pulse is played from rest through the structure's level rule
+table, as that study's harness had them, and are recorded as probes. Every pulse is played from rest through the structure's level rule
 (shock_model.play). Measurement noise: Gaussian, `noise` times the full-level reference's RMS, on every measured
 record, from numpy.random.default_rng([seed, 1]).
 """
@@ -32,7 +32,7 @@ MIN_STEP_DB = 0.75
 
 @dataclass
 class Setup:
-    """What a law is given, as the record's `Setup`: fs, n, nc, nd, band_lo, band_hi, reference (nc, n) full level,
+    """What a law is given, as the earlier study's `Setup`: fs, n, nc, nd, band_lo, band_hi, reference (nc, n) full level,
     natural_hz, q, points (nc, nf) full level, frf (n/2 + 1, nc, nd). The harness keeps the structure apart."""
     fs: float
     n: int
@@ -77,7 +77,7 @@ def load(folder, kind):
 
 
 class EngineLadder:
-    """The record's EngineLadder (mshock_gym.harness), line for line."""
+    """The earlier study's engine ladder, line for line."""
 
     def __init__(self, table, per_level=6, full_pulses=3, tol=TOL):
         self.table = list(table)
@@ -219,7 +219,7 @@ def run(setup, st, law, tg=None, noise=1e-3, seed=11, table=(-12.0, -9.0, -6.0, 
     sigma = noise * setup.reference_rms
     rng = np.random.default_rng([seed, 1])
     lad = law.ladder(list(table))
-    eng = EngineLadder(lad, per_level)          # the record's: the law's probes are the first rungs of the engine's table
+    eng = EngineLadder(lad, per_level)          # as the earlier study's: the law's probes are the first rungs of the engine's table
     am = sm.article_modes(st)
     recs, history = [], []
     # Effective duration (SRS targets): each control's TE against its target waveform's, both by Method 516.8

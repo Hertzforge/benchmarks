@@ -4,3 +4,5 @@ __pycache__/
 # the set's problems and run folders are data, kept out of the repository
 problems/
 obs-data/
+# cargo build output when no CARGO_TARGET_DIR is set
+shock/*/target/

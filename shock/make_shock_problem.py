@@ -7,7 +7,7 @@ Each shock problem folder is named as the Random folder it is built on and holds
 byte for byte (its SHA-256 is checked against the Random problem's own record), so a structure id means the same in
 both suites. What is new is the target and its full level:
 
-- targets: `srs` (the shock record's SRS shape, one synthesized waveform in phase at every control),
+- targets: `srs` (the earlier study's SRS shape, one synthesized waveform in phase at every control),
   `half_sine` and `sawtooth` (11 ms, MIL-STD-810H 516 shapes, with pre- and post-pulse compensation), each
   projected onto what the frame can reach in its small-signal model (the response at the controls to the
   least-squares drive); the specification's departure from the projection is recorded as the declared deviation;

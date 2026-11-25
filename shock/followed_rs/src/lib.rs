@@ -1,6 +1,6 @@
 //! The law math's `followed` and `followed-hold` behind a plain C ABI, for the
 //! shock harness (`shock/laws_rust.py`, ctypes), closed loop, pulse by pulse.
-//! Conventions (the research bridge's): records row-major `f64` (`rows * n`);
+//! Conventions: records row-major `f64` (`rows * n`);
 //! the identification line-major, row-major per line, complex interleaved
 //! (`(n/2+1) * nc * nd * 2`); 0 on success, -1 on failure with the message
 //! readable by `fl_last_error`.

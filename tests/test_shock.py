@@ -1,5 +1,6 @@
 """The MIMO Shock suite draft: the model is linear when the level rule is off, the SRS, the pulses, the scorer's
-readings on hand-made runs. Needs the Random set's problems for the structure test (OBS_SET, else skipped)."""
+readings on hand-made runs. Needs the Random set's problems for the structure tests
+(OBS_SET, the folder that holds problems/; by default the folder that holds the code; else skipped)."""
 import copy
 import os
 import sys
@@ -12,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'shock'))
 import shock_model as sm  # noqa: E402
 import shock_scorer as scorer  # noqa: E402
 
-RANDOM = os.environ.get('OBS_SET', os.path.expanduser('~/dev/obs-data.noindex/problems'))
+RANDOM = os.path.join(os.environ.get('OBS_SET') or os.path.dirname(os.path.dirname(HERE)), 'problems')   # the set's root
 ONE = os.path.join(RANDOM, 'frame-6x6-realistic_s00', 'structure.json')
 
 

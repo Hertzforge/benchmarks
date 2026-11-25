@@ -22,13 +22,13 @@ sys.path.insert(0, os.path.dirname(HERE))
 import reference_model as rm  # noqa: E402
 
 FS = 8192.0                     # the Random suite's sample rate; its structures are checked against FS / 2
-N = 16384                       # two seconds a record (a 1 s record let the inverse drives wrap; see Design.md)
+N = 16384                       # two seconds a record (a 1 s record let the inverse drives wrap)
 Q = 10.0
-BAND_SRS = (50.0, 2000.0)       # the SRS target's span (the shock record's: third octaves 50 Hz to 2 kHz)
+BAND_SRS = (50.0, 2000.0)       # the SRS target's span (the earlier study's: third octaves 50 Hz to 2 kHz)
 BAND_CLASSICAL_LO = 5.0         # classical pulses carry their content (and the compensation) down to a few Hz
 K3 = np.arange(-13, 4)          # third-octave points 1000 2^(k/3): 49.6 Hz to 2000 Hz, 17 points
 NAT3 = 1000.0 * 2.0 ** (K3 / 3.0)
-K12 = np.arange(-52, 13)        # twelfth-octave points over the same span (the record's fine reading), 65 points
+K12 = np.arange(-52, 13)        # twelfth-octave points over the same span (the earlier study's fine reading), 65 points
 NAT12 = 1000.0 * 2.0 ** (K12 / 12.0)
 K516 = np.arange(-80, 13)       # draft 0.2: twelfth-octave centres 1000 10^(k/40) (base ten), 10.0 Hz to 1995.3 Hz, 93 points
 NAT516 = 1000.0 * 10.0 ** (K516 / 40.0)
@@ -162,7 +162,7 @@ def wavelet(t, f, n_half, t0):
 
 
 def srs_shape(nat):
-    """The target SRS shape over the points: +6 dB an octave from 50 to 100 Hz, flat above (the shock record's twist
+    """The target SRS shape over the points: +6 dB an octave from 50 to 100 Hz, flat above (the earlier study's twist
     target's shape, its 50 g flat from 100 Hz), one at 100 Hz and above."""
     nat = np.asarray(nat, float)
     return np.minimum(1.0, nat / 100.0)
@@ -171,7 +171,7 @@ def srs_shape(nat):
 def synth_srs_pulse(seed, fs=FS, n=N, iters=30):
     """One acceleration waveform whose SRS on the twelfth-octave points follows srs_shape (unit flat level):
     Smallwood wavelets at each twelfth-octave point from 40 Hz, odd half-cycle counts, signs and delays inside TE,
-    drawn from `seed`; amplitudes by the amplitude iteration on the waveform's SRS (the record's synthesis, x2)."""
+    drawn from `seed`; amplitudes by the amplitude iteration on the waveform's SRS (the earlier study's synthesis)."""
     rng = np.random.default_rng([20261121, seed])
     t = np.arange(n) / fs
     fw = 1000.0 * 2.0 ** (np.arange(-56, 13) / 12.0)

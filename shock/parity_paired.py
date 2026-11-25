@@ -1,8 +1,7 @@
 """paired against the shipped Rust law (hertzforge-mimo-shock-law-math, paired.rs, PairedParams::diagonal), and why it
 fails on these frames.
 
-    cargo build --release --manifest-path shock/parity_paired_rs/Cargo.toml     # needs a checkout of the repository at
-                                                                                 # ../sds beside this one
+    cargo build --release --manifest-path shock/parity_paired_rs/Cargo.toml     # fetches the law math from Hertzforge
     python shock/parity_paired.py --bin <target>/release/paired_replay --problems <problems> --out paired_parity.json \
         frame-6x6_s00:half_sine frame-12x6-strong_s00:srs ...
 

@@ -1,7 +1,6 @@
 # MIMO Shock Suite, Draft 0.2: Problem Folder and Run File
 
-Draft, not released. The design and its reasons are in the research record
-(`07_Research/MIMO_Shock_Benchmark/Design.md`).
+Draft, not released.
 
 ## The Folder
 
@@ -29,10 +28,9 @@ strict, ends, ends_pm3, level, exposure, card, classical, duration). No time his
 ## Changed From 0.1, and Why
 
 Draft 0.1 judged the SRS on 17 third-octave points from 49.6 Hz within -3/+3 dB at every point, and
-the classical pulses by their peak band and a velocity change within 10 %. These were the shock
-record's values and recalled 516 values; checked against MIL-STD-810H Method 516.8 on 2026-11-22
-(`Method_516_Tolerances_Check_2026-11-22.md` in the research record), several differ, so 0.2
-follows the standard:
+the classical pulses by their peak band and a velocity change within 10 %. These were the values of an
+earlier, unpublished study and recalled 516 values; checked against MIL-STD-810H Method 516.8 on
+2026-11-22, several differ, so 0.2 follows the standard:
 
 | | 0.1 | 0.2 (Method 516.8) |
 |---|---|---|

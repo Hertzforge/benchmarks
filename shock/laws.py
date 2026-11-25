@@ -5,25 +5,24 @@ Baselines (the product's starter laws, ported from their Rust sources, hertzforg
             5 % growth, restore x1.2) (inverse.rs, InverseParams::default)
   shape     per-control SRS-ratio gains on the lines (log-f interpolation between points, shape's weight table,
             6 dB step limit) and delay alignment (relax 0.5, bound 2 ms), the identified model frozen
-            (shape.rs, safety off, carry Keep; the record's numpy port e3law/port.py ShapePy, line for line)
+            (shape.rs, safety off, carry Keep; the earlier study's NumPy port, line for line)
   paired    each control paired with one drive, the pair's own path inverted, per-line magnitude ratio smoothed
             over 15 lines, weight 0.8, 6 dB step limit (paired.rs, PairedParams::diagonal)
-Campaign 6 candidates (ported from the record's reference implementations, mshock-research):
-  followed       shape on round 4's followed softening family: probes at -40 and -34 dB, per-octave drops fitted
+Candidates (ported from the reference implementations of an earlier, unpublished simulation study of these laws):
+  followed       shape on the followed softening family: probes at -40 and -34 dB, per-octave drops fitted
                  from the pulses (coarse -5 to 40 % by 1 %, fine +/-1 % by 0.1 %), carried up as a bounded power of
                  the amplitude, margin 1.5, ceiling 12 %, the family inverse over members 0, 1/2, 1 of the drop
-                 (e3law/port.py FollowedProvider + ShapePy; the warp, the family inverse and the fit, which the
-                 record reached through its Rust bridge, are restated here in NumPy: see Soft)
+                 (the warp, the family inverse and the fit, which that study took from the Rust law math, are
+                 restated here in NumPy: see Soft)
   followed-hold  followed with no ceiling, the probe check (scale a probe down when its prediction plus the
                  measured prediction error carried in amplitude is over +3 dB), the resolved power (gate 0.5 %),
                  and the hold (a repeat pulse inside 3 dB at every point plays the same drive)
-                 (audit_e3/ae3.py E3Var(freeze=True, dead_band_db=3.0) over e3law/law.py E3Law)
   srs-design     for more controls than drives: per control a smooth log gain and a bounded delay at each SRS point,
                  the drive the regularized inverse of those references inside a support window, the parameters found
                  by gradient descent on the predicted from-rest SRS error; declines before the first pulse when its
                  own prediction misses by more than 3 dB; between pulses the measured-minus-predicted error is kept
                  as a bias and the design re-optimized; ends the run after a pulse more than 3 dB over; square
-                 frames are handed to followed-hold (f2/law_f2.py, simplified: see SrsDesign)
+                 frames are handed to followed-hold (simplified: see SrsDesign)
 """
 import os
 import sys
@@ -141,7 +140,7 @@ class Paired(Law):
 
 # ------------------------------------------------------------------------------------------------ the softening family
 class Soft:
-    """The followed family's fixed pieces in NumPy (the record reached them through its Rust bridge: warp.rs,
+    """The followed family's fixed pieces in NumPy (the Rust law math's warp.rs,
     softening.rs, first_pulse.rs). Knots at third octaves from 40 Hz to the band's top; bands of one octave from
     the lowest knot; a member lowers band b's resonances by frac * drops[b] (the delay-free response read at
     f / (1 - d(f)), d linear in log f between knots, the row's bulk delay put back); the family inverse is the
@@ -243,7 +242,7 @@ class Soft:
 
 
 class FollowedProvider:
-    """e3law/port.py FollowedProvider, line for line (power 'measured' or 'resolved' with its gate)."""
+    """The earlier study's followed provider, line for line (power 'measured' or 'resolved' with its gate)."""
 
     def __init__(self, soft, base, ceiling=0.12, margin=1.5, p_max=1.0, probe_levels=2, members=(0.0, 0.5, 1.0),
                  narrow=1.0, power='measured', gate=0.005):
@@ -331,8 +330,8 @@ class FixedProvider:
 
 
 class ShapePy:
-    """`shape` with a model provider, safety off, carry Keep (e3law/port.py, line for line). hold: the record's
-    FreezeShape (a repeat pulse with every point inside hold_db keeps the drive)."""
+    """`shape` with a model provider, safety off, carry Keep (the earlier study's port, line for line). hold: that
+    study's freeze (a repeat pulse with every point inside hold_db keeps the drive)."""
 
     def __init__(self, s, provider, lambda_rel=1e-3, max_step_db=6.0, delay_relax=0.5, delay_bound_s=2e-3, hold_db=None):
         self.s, self.p = s, provider
@@ -500,10 +499,10 @@ class FollowedHold(Law):
 
 # ------------------------------------------------------------------------------------------------ srs-design
 class SrsDesign(Law):
-    """Simplified port of the record's F2Law (f2/law_f2.py). Kept: per control a log gain and a delay (within 2 ms)
+    """Simplified port of the earlier study's SRS-design law. Kept: per control a log gain and a delay (within 2 ms)
     at each SRS point, linear in log f between points, a free phase offset; the drive the regularized inverse of
     the shaped references inside the support window (ramp up over n/64, one to 3n/4, ramp down to zero at 7n/8,
-    zero after); the response predicted FROM REST by the identified model (linear convolution); the record's
+    zero after); the response predicted FROM REST by the identified model (linear convolution); that study's
     non-circular SRS of the prediction; the decline before the first pulse (predicted worst point beyond 3 dB);
     the bias update between pulses blended by shape's weight table; the stop after a pulse more than 3 dB over; the
     hand-off of square frames to followed-hold. Left out: the robustness term (first-order spread over a model set)

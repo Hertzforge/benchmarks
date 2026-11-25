@@ -3,15 +3,15 @@
     card = score_run(run)          # run: the dict harness.run returns (or its saved JSON)
 
 No reading is the verdict; each is reported with its margin and, on a miss, the criterion it broke and by how much
-(the acceptance proposal's rule: margins and pass rates under several readings, never one binary verdict).
+(margins and pass rates under several readings, never one binary verdict).
 
-  strict    the shock record's run criteria 1 to 7 (mshock_gym.harness.score, R6-RUN): 1 probes and the first
+  strict    the earlier study's run criteria 1 to 7: 1 probes and the first
             ladder pulse at most +3 dB over their own level; 2 no pulse below full level more than 3 dB over the
             full-level target (absolute); 3 the first full-level pulse within +3 dB; 4 the third full-level pulse
             inside the 516.8 tolerance (below); 5 the run completed and its last pulse inside it; 6 no identification
-            excitation over +3 dB absolute (none in this suite: true; the key keeps the record's name); 7 no full-level
-            pulse more than 3 dB over. Criteria 1, 2, 3 and 7 are over-test guards on the worst point, as the record
-            has them; 4 and 5 were "within 3 dB at every point" in draft 0.1
+            excitation over +3 dB absolute (none in this suite: true; the key keeps the earlier study's name); 7 no full-level
+            pulse more than 3 dB over. Criteria 1, 2, 3 and 7 are over-test guards on the worst point, as the earlier
+            study has them; 4 and 5 were "within 3 dB at every point" in draft 0.1
   ends      the last full-level pulse inside Method 516.8's SRS tolerance on every control: -1.5/+3 dB on at least 90 %
             of its points and every point within -3/+6 dB (margin: shock_model.excess_516, negative inside)
   ends_pm3  secondary, draft 0.1's ends reading: every point of every control within -3/+3 dB

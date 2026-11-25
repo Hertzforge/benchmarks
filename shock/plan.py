@@ -1,5 +1,5 @@
 """The MIMO Shock study's design as code: which problems, which laws, which runs. Writes the problem list and the
-jobs file the batch reads; the design and its reasons are in the record's Design.md.
+jobs file the batch reads.
 
     python shock/plan.py --design study --out <folder>        # writes structures.txt and jobs.json
 """
@@ -9,7 +9,7 @@ import os
 
 RANDOM_STUDY_SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 32, 33, 12, 13, 14, 15, 34, 17, 35, 19]   # the Random study's twenty, in order
 AUDIT_SEEDS = [70, 71, 72, 73, 74]     # held back, drawn fresh (not in any Random batch); replacements from 80 up, in order
-LAWS = ['inverse', 'shape', 'paired', 'followed', 'followed-hold']   # srs-design did not pass the screen (Design.md)
+LAWS = ['inverse', 'shape', 'paired', 'followed', 'followed-hold']   # srs-design did not pass the screen
 DESIGNS = {
     # cells: (rig, tier) -> structures (the first n of the Random study's seeds); every cell runs every target kind
     # and every law, except paired, which runs on the first `paired_n` structures of each cell (the screen: it fails
