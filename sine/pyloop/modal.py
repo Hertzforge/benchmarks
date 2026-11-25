@@ -225,14 +225,24 @@ def _fit_group(gg, HH, fr, zr, iters=40):
 _FIT_CACHE = {}
 
 
-def modal_form(setup, truth=None, cache_dir=None):
+# The modal fits a law can be built on, by name (the suite's switch, Package F). 'current': the research round's fit
+# (ModalForm.fit, peak picking and a local least-squares fit of each group). The modal-fit package's fit is added here
+# under its own name when it reports; a law's `modal_fit` parameter chooses.
+MODAL_FITS = {'current': lambda ident, band: ModalForm.fit(ident, band)}
+
+
+def modal_form(setup, truth=None, cache_dir=None, fit='current'):
     """The modal form the law uses. The fit is deterministic in the identification, so it is cached
     in memory, and on disk when cache_dir is given (a study convenience; the law is the same)."""
     if truth is not None:
         return ModalForm.from_truth(truth, setup.ident, setup.band)
+    if fit not in MODAL_FITS:
+        raise ValueError(f'no modal fit {fit!r}; known: {sorted(MODAL_FITS)}')
     import hashlib
     import os
     key = hashlib.sha1(np.ascontiguousarray(setup.ident.H0).tobytes()).hexdigest()[:16]
+    if fit != 'current':
+        key = f'{fit}-{key}'
     if key in _FIT_CACHE:
         f0, z0, A = _FIT_CACHE[key]
         return ModalForm(setup.ident, f0, z0, A, 'fit')
@@ -241,7 +251,7 @@ def modal_form(setup, truth=None, cache_dir=None):
         z = np.load(path)
         mf = ModalForm(setup.ident, z['f0'], z['z0'], z['A'], 'fit')
     else:
-        mf = ModalForm.fit(setup.ident, setup.band)
+        mf = MODAL_FITS[fit](setup.ident, setup.band)
         if path:
             os.makedirs(cache_dir, exist_ok=True)
             np.savez(path, f0=mf.f0, z0=mf.z0, A=mf.A)
@@ -270,9 +280,9 @@ def fit_error(mf, st, setup):
 class _ModelLaw(CarriedInverse):
     """K1's carried loop with the model replaced (H(f) and Z(f) of the subclass)."""
 
-    def __init__(self, setup, truth=None, fit_cache=None, smooth_base=8, **kw):
+    def __init__(self, setup, truth=None, fit_cache=None, smooth_base=8, modal_fit='current', **kw):
         super().__init__(setup, **kw)
-        self.mf = modal_form(setup, truth, fit_cache)
+        self.mf = modal_form(setup, truth, fit_cache, modal_fit)
         if smooth_base:
             self.mf.smooth_base(int(smooth_base))
 
@@ -395,7 +405,8 @@ class FollowedPoles(_ModelLaw):
         self.refit_scale, self.prior_scale = refit_scale, prior_scale
         self.fallback = None
         if fallback == 'family':
-            self.fallback = FamilyInverse(setup, truth=truth, expected_drop=expected_drop, expected_damp=expected_damp)
+            self.fallback = FamilyInverse(setup, truth=truth, expected_drop=expected_drop, expected_damp=expected_damp,
+                                          modal_fit=kw.get('modal_fit', 'current'))
         n = setup.n
         self.Y = np.zeros((mf.M, n), complex)           # follower's envelope states
         self.Y0 = np.zeros((mf.M, n), complex)          # fallback (frozen) envelope states

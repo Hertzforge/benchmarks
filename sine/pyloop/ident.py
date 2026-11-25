@@ -56,7 +56,7 @@ class Identification:
             tw = getattr(self, 'gd_turn', None)
             if tw is not None:
                 H = H * np.exp(2j * np.pi * g * float(tw[0]) / float(tw[1]))[:, None]
-            ph =np.unwrap(np.angle(H), axis=0)
+            ph = np.unwrap(np.angle(H), axis=0)
             d = np.abs(np.gradient(ph, 2 * np.pi * g, axis=0))
             big = np.abs(H) >= 0.1 * np.abs(H).max(1, keepdims=True)
             gd = np.where(big, d, 0.0).max(1)

@@ -720,5 +720,126 @@ class TestPipeline(unittest.TestCase):
             hz.pipeline_for(case, idn, idn)
 
 
+class TestCandidates(unittest.TestCase):
+    """The research round's candidates in the harness (Package F): each check is shown to fail on a case built to
+    break it."""
+
+    def write_case(self, test='T1', law='k2f', params=None, rung=None):
+        c = json.load(open(os.path.join(P(LIN), 'cases', f'{test}__matrix.json')))
+        c['law'] = dict(id=law, params=params or {})
+        c['case_id'] = c['case_id'].replace('__matrix', '__' + law)
+        if rung is not None:
+            c['ladder']['rung'] = rung
+        path = os.path.join(tempfile.mkdtemp(dir=TMP), 'case.json')
+        json.dump(c, open(path, 'w'))
+        return path
+
+    def case(self, **kw):
+        from pyloop import harness as hz
+        return hz.Case(self.write_case(**kw), os.path.join(TMP, 'problems'))
+
+    def test_a_candidate_takes_only_its_tests_and_parameters(self):
+        from pyloop import harness as hz
+        self.assertEqual(self.case(test='T1', law='k2f').law_params['expected_drop'], hz.K2F_EXPECTED_DROP)
+        self.assertEqual(self.case(test='T4', law='k5', params=dict(dither=0.03)).law_params['dither'], 0.03)
+        with self.assertRaises(hz.Refused):
+            self.case(test='T4', law='k2f')
+        with self.assertRaises(hz.Refused):
+            self.case(test='T1', law='k5')
+        with self.assertRaises(hz.Refused):
+            self.case(test='T1', law='k2f', params=dict(no_such=1))
+        with self.assertRaises(hz.Refused):          # a shipped law still takes no parameters
+            self.case(test='T1', law='matrix', params=dict(eps=1e-2))
+
+    def test_a_rung_of_whole_sweeps_bounces_one_pass_a_rung(self):
+        # five rungs of one sweep each: up at -12 dB, down at -9, up at -6, down at -3, up at 0, then done; the 2 s
+        # rungs of the suite's case reach full level within the first pass
+        from pyloop import harness as hz
+        case = self.case(test='T1', law='k4', rung={'sweeps': 1})
+        sch = hz.Schedule(case)
+        dt = case.dt
+        seen, k = [], 0
+        while not sch.done and k < 10 ** 6:
+            f = sch.frequency()
+            lv = sch.level_db()
+            if not seen or seen[-1][0] != lv:
+                seen.append([lv, f, f])
+            seen[-1][2] = f
+            sch.step(dt)
+            k += 1
+        lo, hi = case.test['band_hz']
+        self.assertEqual([x[0] for x in seen], [-12.0, -9.0, -6.0, -3.0, 0.0])
+        ups = [x[2] > x[1] for x in seen]
+        self.assertEqual(ups, [True, False, True, False, True])
+        self.assertAlmostEqual(k * dt, 5 * hz.test_length_s(case.test), delta=5 * dt)
+        self.assertAlmostEqual(case.max_test_s, 1.5 * 5 * hz.test_length_s(case.test) + 60.0, places=6)
+        sec = hz.Schedule(self.case(test='T1', law='k4'))
+        for _ in range(int(round(9.0 / dt))):
+            sec.step(dt)
+        self.assertEqual(sec.level_db(), 0.0, 'the check cannot fail')
+        self.assertLess(sec.frequency(), lo * 1.2)
+
+    def test_the_modal_fit_switch(self):
+        from pyloop import harness as hz
+        from pyloop import modal
+        case = self.case(test='T4', law='k5')          # the dwell's narrow band: a quick modal fit
+        idn = hz.identify(case)
+        setup = hz.make_setup(case, idn)
+        setup.band = case.ident_band                    # the dwell's identification band, around its resonance
+        with np.errstate(all='ignore'):
+            a = modal.modal_form(setup)
+            modal.MODAL_FITS['test_other'] = lambda ident, band: modal.ModalForm(ident, [], [], np.zeros((0, 6, 6)), 'x')
+            try:
+                b = modal.modal_form(setup, fit='test_other')
+                law = modal.FollowedPoles(setup, modal_fit='test_other')
+            finally:
+                del modal.MODAL_FITS['test_other']
+        self.assertGreater(a.M, 0)
+        self.assertEqual(b.M, 0)
+        self.assertEqual(law.mf.M, 0)
+        with self.assertRaises(ValueError):
+            modal.modal_form(setup, fit='no_such_fit')
+
+    def test_k4s_fitted_model_is_the_identification_at_low_level(self):
+        from pyloop import harness as hz
+        from pyloop.k4_ladder import LevelLadder
+        case = self.case(test='T4', law='k5')          # the dwell's narrow band: a quick modal fit
+        idn = hz.identify(case)
+        setup = hz.make_setup(case, idn)
+        setup.band = case.ident_band                    # the dwell's identification band, around its resonance
+        with np.errstate(all='ignore'):
+            law = LevelLadder(setup)
+        M = law.M
+        self.assertGreater(M.f0.size, 0)
+        for f in np.geomspace(setup.band[0], setup.band[1], 7):
+            want = M.mf.H0_at(f)
+            got = M.H(f, M.f0, M.z0)
+            self.assertLess(np.abs(got - want).max() / np.abs(want).max(), 1e-10)
+            moved = M.H(f, M.f0 * 0.97, M.z0)
+            if np.any(np.abs(f - M.f0) < 3 * 2 * M.z0 * M.f0):
+                self.assertGreater(np.abs(moved - want).max() / np.abs(want).max(), 1e-3, 'the check cannot fail')
+        # each residue rank one: the dominant singular pair of the fitted residue
+        r = 0
+        s = np.linalg.svd(M.mf.A[r], compute_uv=False)
+        self.assertAlmostEqual(np.linalg.norm(np.outer(M.Phi[r], M.Gam[r])), s[0], delta=1e-9 * s[0])
+
+    def test_k5s_period_reads_the_engines_loop_delays(self):
+        from pyloop import harness as hz
+        from pyloop.k5_rls_dither import RLSDither
+        case = self.case(test='T4', law='k5')
+        idn = hz.identify(case)
+        f = case.test['freq_hz']
+        s0 = hz.make_setup(case, idn)
+        s0.tracker_delay_factor = 1.0 / np.pi
+        del s0.tracker_delay_factor
+        testbed = int(np.ceil((2.0 / (2 * np.pi * s0.tracking_bw(f)) + idn.group_delay_at(f)) / s0.dt_c))
+        self.assertEqual(RLSDither(s0)._period(f), max(testbed, 2))
+        s1 = hz.make_setup(case, idn, 335)
+        want = int(np.ceil((hz.TRACKER_DELAY_FACTOR / s1.tracking_bw(f) + idn.group_delay_at(f) + 335 / case.fs)
+                           / s1.dt_c))
+        self.assertEqual(RLSDither(s1)._period(f), max(want, 2))
+        self.assertNotEqual(RLSDither(s1)._period(f), RLSDither(s0)._period(f), 'the check cannot fail')
+
+
 if __name__ == '__main__':
     unittest.main()

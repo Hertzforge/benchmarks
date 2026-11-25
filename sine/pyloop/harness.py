@@ -49,6 +49,9 @@ from pyloop.laws_baselines import BASELINES                         # noqa: E402
 from pyloop.paired_ref import PairedRef                             # noqa: E402
 from pyloop.matrix_shipped import ShippedMatrix                     # noqa: E402
 from pyloop.fitted import FittedModal, is_fitted                     # noqa: E402
+from pyloop.modal import FamilyInverse, FollowedPoles               # noqa: E402
+from pyloop.k4_ladder import LevelLadder                            # noqa: E402
+from pyloop.k5_rls_dither import RLSDither                          # noqa: E402
 
 RUN_SCHEMA = 'msnb-run/1'
 REFERENCE_SCHEMA = 'msnb-reference/1'
@@ -61,6 +64,24 @@ LAWS = {
     'ratio': (BASELINES['ratio_per_control'], dict(pairing='reference'), True),
     'steepest_descent': (BASELINES['steepest_descent'], {}, False),
     'secant': (BASELINES['secant_complex_gain'], dict(carry='factor'), False),
+}
+
+# The research round's candidates (Candidate_Laws.md K2f, K3, K4, K5), ported from the testbed (Package F): not
+# shipped laws, so not in the runner; the harness runs them for the screen. Each: (class, its defaults here, amplitude
+# only, the test types it accepts, the parameters a case may set). Defaults are the testbed classes' own except where
+# a comment says (FORMAT_SINE.md, "The Candidate Laws").
+K2F_EXPECTED_DROP = 0.05            # K2f's expected full-level drop: the tuning structures' median change (FORMAT_SINE)
+CANDIDATES = {
+    'k2f': (FamilyInverse, dict(expected_drop=K2F_EXPECTED_DROP, expected_damp=1.0, modal_fit='current'), False,
+            ('sweep', 'stepped'), ('expected_drop', 'expected_damp', 'span_margin', 'spacing_bw', 'max_members', 'mu',
+                                   'modal_fit')),
+    'k3': (FollowedPoles, dict(modal_fit='current'), False, ('sweep',),
+           ('window', 'fit_every', 'near_bw', 'prior_bw', 'prior_lnz', 'range_bw', 'step_bw', 'data_rel', 'gate_snr',
+            'iters', 'gate', 'gate_ratio', 'fallback', 'expected_drop', 'expected_damp', 'modal_fit')),
+    'k4': (LevelLadder, dict(modal_fit='current'), False, ('sweep',),
+           ('predict', 'p_default', 'q_default', 'fit_bw', 'fit_frac', 'min_points', 'fit_iters', 'modal_fit')),
+    'k5': (RLSDither, {}, False, ('dwell',), ('dither', 'lam', 'period', 'deadband_db', 'dither_in_deadband',
+                                             'dither_on')),
 }
 
 # the engine's defaults the runner leaves in force (FORMAT_RUN.md, "protective"; hertzforge-mimo-sine)
@@ -166,7 +187,10 @@ class Case:
         raw = open(path, 'rb').read()
         self.sha256 = hashlib.sha256(raw).hexdigest()
         c = json.loads(raw)
-        bad = case_schema.check(c)
+        # a candidate's case is msnb-case/1 with a law the runner does not have (the harness's own, CANDIDATES): the
+        # rest of the case is checked as the runner's, the law entry by the candidate's own table below
+        cand = isinstance(c.get('law'), dict) and c['law'].get('id') in CANDIDATES
+        bad = case_schema.check(dict(c, law=dict(id='matrix', params={})) if cand else c)
         if bad:
             raise Refused('the case does not meet msnb-case/1: ' + '; '.join(bad[:3]))
         self.raw = c
@@ -185,12 +209,22 @@ class Case:
                              for L in c.get('limits', [])]
         self.drive_names = [d['name'] if isinstance(d, dict) else str(d) for d in self.st.drives]
         law = c['law']
-        if law['id'] not in LAWS:
+        t = c['test']
+        if law['id'] in CANDIDATES:
+            cls, dflt, amp_only, tests, settable = CANDIDATES[law['id']]
+            if t['type'] not in tests:
+                raise Refused(f"the candidate {law['id']} takes {', '.join(tests)} tests, not {t['type']}")
+            bad = sorted(set(law.get('params') or {}) - set(settable))
+            if bad:
+                raise Refused(f"the candidate {law['id']} has no parameter {', '.join(bad)} a case may set")
+            self.law_cls, self.law_params = cls, dict(dflt, **(law.get('params') or {}))
+        elif law['id'] not in LAWS:
             raise Refused(f"no Python version of the law {law['id']}")
-        if law.get('params'):
+        elif law.get('params'):
             raise Refused('law parameters other than the manifest defaults are not modelled by the harness')
+        else:
+            self.law_cls, self.law_params, amp_only = LAWS[law['id']]
         self.law_id = law['id']
-        self.law_cls, self.law_params, amp_only = LAWS[law['id']]
         ph = c['reference'].get('phase', 'auto')
         self.phase_specified = (not amp_only) if ph == 'auto' else ph == 'specified'
         rfile = os.path.join(root, c['reference']['file'])
@@ -205,14 +239,17 @@ class Case:
         self.fs = float(c.get('fs_hz', 8192.0))
         self.tick_n = int(round(float(c.get('tick_s', 0.01)) * self.fs))
         self.dt = self.tick_n / self.fs
-        t = c['test']
         self.test = t
         lad = c.get('ladder') or {}
         self.levels = [float(x) for x in lad.get('levels_db', [0.0])]
         rung = lad.get('rung') or ({'sweeps': 1} if t['type'] == 'sweep' else {'seconds': 2.0})
-        if 'sweeps' in rung:
-            raise Refused('a rung held for whole sweeps is not modelled by the harness')
-        self.rung_s = float(rung['seconds'])
+        # a rung of whole sweeps (the engine's LadderPlan per_rung Sweeps): the sweep bounces at the band's edges
+        # (hertzforge-sine BidirSweep), one-direction passes counted, the rung moving after `sweeps` passes; the test
+        # runs `sweeps` passes a rung (the runner sets one pass, so it does not run such a case: FORMAT_SINE.md)
+        self.rung_sweeps = int(rung['sweeps']) if 'sweeps' in rung else None
+        if self.rung_sweeps is not None and (t['type'] != 'sweep' or self.rung_sweeps < 1):
+            raise Refused('a rung of whole sweeps needs a sweep test and at least one sweep')
+        self.rung_s = float(rung['seconds']) if 'seconds' in rung else 0.0
         drv = c.get('drives') or {}
         self.ceiling = float(drv.get('ceiling_vpk', 9.0))
         self.abort_vpk = float(drv.get('abort_vpk', 10.0))
@@ -232,7 +269,8 @@ class Case:
         else:
             self.ident_band = (t['band_hz'][0] / IDENT_BAND, t['band_hz'][1] * IDENT_BAND)
             self.band = tuple(t['band_hz'])
-        rungs = (len(self.levels) - 1) * self.rung_s
+        rungs = (len(self.levels) - 1) * (self.rung_s if self.rung_sweeps is None
+                                          else self.rung_sweeps * self.test_length_s())
         self.max_test_s = float(c['max_test_s']) if c.get('max_test_s') else 1.5 * (self.test_length_s() + rungs) + 60.0
 
     def test_length_s(self):
@@ -421,6 +459,8 @@ class Schedule:
             self.total = np.log2(hi / lo)
             self.rate = t['rate_oct_per_min']
             self.pos = 0.0
+            self.dir = 1.0                     # along the first direction; -1 back (a bounce, rungs of sweeps)
+            self.passes = 0
         elif self.kind == 'stepped':
             self.grid = step_grid(t)
             self.k = 0
@@ -429,7 +469,7 @@ class Schedule:
             self.dwell_t = 0.0
 
     def frequency(self):
-        if self.kind == 'sweep':
+        if self.kind == 'sweep':      # pos: octaves from the start edge
             return self.f0 * 2.0 ** (self.pos if self.up else -self.pos)
         if self.kind == 'stepped':
             return float(self.grid[min(self.k, self.grid.size - 1)])
@@ -447,7 +487,7 @@ class Schedule:
     def sweep_rate(self):
         if self.kind != 'sweep' or self.done:
             return 0.0, 0.0
-        octm = self.rate if self.up else -self.rate
+        octm = (self.rate if self.up else -self.rate) * self.dir
         return self.frequency() * np.log(2.0) * octm / 60.0, octm
 
     def step(self, dt):
@@ -455,7 +495,29 @@ class Schedule:
         settling = self.settle_left > 0.0
         self.settle_left = max(0.0, self.settle_left - dt)
         before = self.frequency()
-        if self.kind == 'sweep':
+        lev0 = self.rung
+        if self.kind == 'sweep' and self.case.rung_sweeps is not None:
+            # bounce at the edges; each pass done moves the rung after rung_sweeps passes; the test ends after
+            # rung_sweeps passes at the last rung
+            step = dt * self.rate / 60.0
+            while step > 0.0 and not self.done:
+                room = (self.total - self.pos) if self.dir > 0 else self.pos
+                if step < room - 1e-12:
+                    self.pos += self.dir * step
+                    step = 0.0
+                else:
+                    self.pos = self.total if self.dir > 0 else 0.0
+                    step -= room
+                    self.dir = -self.dir
+                    self.passes += 1
+                    if self.passes % self.case.rung_sweeps == 0:
+                        if self.rung + 1 < len(self.levels):
+                            self.rung += 1
+                        else:
+                            self.done = True
+                    if self.done:
+                        step = 0.0
+        elif self.kind == 'sweep':
             self.pos = min(self.total, self.pos + dt * self.rate / 60.0)
             if self.pos >= self.total - 1e-12:
                 self.done = True
@@ -474,8 +536,7 @@ class Schedule:
                     self.done = True
         after = self.frequency()
         jumped = self.kind != 'sweep' and after != before
-        lev0 = self.rung
-        if not settling and self.rung + 1 < len(self.levels):
+        if self.case.rung_sweeps is None and not settling and self.rung + 1 < len(self.levels):
             self.rung_t += dt
             if self.rung_t >= self.case.rung_s - 1e-9:
                 self.rung += 1
