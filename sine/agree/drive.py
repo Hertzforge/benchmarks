@@ -2,7 +2,8 @@
 
     python3 sine/agree/drive.py <jobs.json> --problems <problems folder> [--workers 8] [--min-free-gb 50]
 
-<jobs.json> is a list of {"id", "problem", "test", "cmd": [argv...], "out": <run folder>}; `cmd` is run as given
+<jobs.json> is a list of {"id", "problem", "test", "cmd": [argv...], "out": <run folder>, optionally "wait_for": a file
+that must exist before the job starts}; `cmd` is run as given
 with `--root <problems> --out <out>` appended (the runner's and the harness's own arguments). For each job the
 driver writes, beside the run's own files in <out>:
   drive.json  the exit status, clock seconds, user and system processor seconds, the largest resident set and peak
@@ -63,6 +64,8 @@ class Driver:
 
     def job(self, j):
         out = j['out']
+        while j.get('wait_for') and not os.path.exists(j['wait_for']):     # a job that reads another job's run
+            time.sleep(5)
         if os.path.exists(os.path.join(out, 'drive.json')):
             with self.lock:
                 self.n['skipped'] += 1

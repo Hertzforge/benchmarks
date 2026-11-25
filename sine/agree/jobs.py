@@ -13,7 +13,8 @@ runs the gain-free equivalent (<base>/cases_gainfree/): no gain, the ceiling in 
 min(9 V, gain x 1.99526231 V). Gain and ceiling scale together, and the engine sets its identification from the
 ceiling (the probe) and the reference (the measured shot), so the two are the same run wherever gain x 1.995 V is
 under 9 V (a gain up to 4.5107); a case over that is listed as changed by the gain. The agreement adds an arm
-py_gain: the harness on the case with its gain, to show the equivalence case by case.
+py_gain: the harness on the case with its gain, to show the equivalence case by case (every case the gain changes,
+and every other case but the 1 octave a minute sweeps, T1 and T5, to save their processor time).
 
 agreement: the systems within the engine's limits (frame-6x6, frame-12x6, frame-12x3), linear and realistic, the
   first two structures of each (s00, s01); every test T1 to T5 each law's manifest accepts (sine/plan.py). Four arms,
@@ -112,7 +113,9 @@ def main(argv=None):
             job('hf_own', [runner, case])
             job('py_exact', [a.python, harness, case])
             job('py_given', [a.python, harness, case, '--ident', os.path.join(base, 'hf_own', key)])
-            job('py_gain', [a.python, harness, gained])
+            arms['py_given'][-1]['wait_for'] = os.path.join(base, 'hf_own', key, 'drive.json')
+            if ch or j['test'] not in ('T1', 'T5'):     # the 1 octave a minute sweeps only where the gain changes the case
+                job('py_gain', [a.python, harness, gained])
         else:
             job('hf_own', [runner, case])
     for arm, lst in arms.items():
