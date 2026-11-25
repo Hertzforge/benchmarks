@@ -134,10 +134,14 @@ def _cx(h, key):
 
 
 def _num(v):
-    """A list that may hold nulls, as floats with NaN for null."""
+    """A list that may hold nulls, as floats with NaN for null. A per-point list of rows may give a whole row as null
+    (the runner's bin_error_db_min/_max where a bin has no judged update, FORMAT_RUN.md): that row is NaN across."""
     if v is None:
         return None
-    return np.array([[np.nan if x is None else x for x in row] if isinstance(row, list) else (np.nan if row is None else row)
+    width = max((len(row) for row in v if isinstance(row, list)), default=None)
+    if width is None:
+        return np.array([np.nan if x is None else x for x in v], float)
+    return np.array([[np.nan if x is None else x for x in row] if isinstance(row, list) else [np.nan] * width
                      for row in v], float)
 
 

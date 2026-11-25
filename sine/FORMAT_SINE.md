@@ -308,8 +308,8 @@ with the batch's own Python.
 `python3 sine/pyloop/harness.py <case> --root <problems> --out <run folder>` runs one case with no
 Hertzforge build and writes `run.json` in the runner's `msnb-run/1` layout (and `timing.json`),
 so the same scorer reads either. Exit status as the runner's: 0 completed, 1 another end, 2
-refused (nothing written). Agreement between the harness and the engine has not been checked; it
-is a separate step.
+refused (nothing written). Agreement between the harness and the engine: `sine/agree/` (Package D), the comparison of
+the two versions' cards reading by reading against fixed criteria.
 
 The laws (`sine/pyloop/`) are the research testbed's (`msine_gym` and its `build_m` reference
 compositions). Changed from the testbed: the imports; the controller keeps only its quasi-steady
@@ -344,7 +344,7 @@ What the harness restates from the shipped engine (`hertzforge-mimo-sine` `core.
 | Part | As restated |
 |---|---|
 | Update | The case's `tick_s` in whole samples; the drive ramps linearly over a tick; the tone's frequency is held through a tick and is phase-continuous |
-| Structure | `reference_model.simulate_level` on the controls and limit channels, the structure's own modes and level rule, continued tick to tick; white noise of `noise.rms_m_s2` added, seeded by `noise.seed` |
+| Structure | A jointed structure (realistic, strong): `reference_model.simulate_level` on the controls and limit channels, the structure's own modes, step and level rule, continued tick to tick. The linear tier (a modal structure): the simulator's fitted discretization, restated (`pyloop/fitted.py`): each mode the continuous mode's exact poles behind a 9-tap numerator fitted to its response delayed 4 samples, 0 to 2200 Hz (the structure's `simulator.discretization`); the reference model's own triangle hold is up to 20 % off the continuous response at 2000 Hz, the fitted filters agree with the engine's own response to 2.5e-12 (Package D). White noise of `noise.rms_m_s2` added, seeded by `noise.seed` |
 | Tracker | Four cascaded one-pole sections on the heterodyned signal, `alpha = B_n / (0.15625 fs)`, `B_n` 10 % of the frequency, at most 100 Hz, set each update |
 | Schedule | The ladder on the test's clock; the dwell's, a step's and the ladder's clocks stop in a settle window, a sweep's does not; the stepped grid from the low edge, `steps_per_octave` an octave |
 | Settle window | `2 x 1.3 / B_n + 3 x` the identification's group delay (largest element form, five-line smoothing, the largest within +/-2 `B_n`), opened at engage, at every level move and at every step |
@@ -362,7 +362,7 @@ What it leaves out or does differently:
 
 | Part | The harness | The engine |
 |---|---|---|
-| Identification | The exact small-signal response (`reference_model.discrete_frf`) on 0.25 Hz lines over the test band /1.25 to x1.25, every line trusted, coherence 1 | Measured at -20 dB with noise, `max(24, 6 x drives)` records, trust and gate at coherence 0.5 |
+| Identification | The exact small-signal response of the stepped structure (`pyloop/fitted.py` for the linear tier, `reference_model.discrete_frf` otherwise) on 0.25 Hz lines over the test band /1.25 to x1.25, every line trusted, coherence 1 | Measured at -20 dB with noise, `max(24, 6 x drives)` records, trust and gate at coherence 0.5 |
 | Lag | The identification includes the structure's delays; no service pipeline delay between the law's answer and the drive | The lag (including the service's block) is measured and taken out of the identification; the drive reaches the structure that many frames later |
 | Backstop notch | Simplified: each limit channel's ratio to the identification's prediction learned from settled readings (3-update smoothing); the drive scaled at once to put the most loaded channel at its bound; the judged reference scaled by the share the inverse drive allows | The engine's notch with its near-bound and hysteresis rules, release rate and a law's notched reference |
 | Units | m/s^2 throughout | The law sees g |

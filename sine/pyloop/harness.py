@@ -47,6 +47,7 @@ from pyloop.interface import Setup, TickIn, reg_pinv                 # noqa: E40
 from pyloop.laws_baselines import BASELINES                         # noqa: E402
 from pyloop.paired_ref import PairedRef                             # noqa: E402
 from pyloop.matrix_shipped import ShippedMatrix                     # noqa: E402
+from pyloop.fitted import FittedModal, is_fitted                     # noqa: E402
 
 RUN_SCHEMA = 'msnb-run/1'
 REFERENCE_SCHEMA = 'msnb-reference/1'
@@ -221,16 +222,23 @@ def identify(case):
     lo, hi = case.ident_band
     g = np.arange(np.ceil(lo / IDENT_LINE_HZ), np.floor(hi / IDENT_LINE_HZ) + 1) * IDENT_LINE_HZ
     g = g[(g > 0) & (g < 0.5 * case.fs)]
+    rows = case.controls + case.limits
+    n = len(case.controls)
     with np.errstate(all='ignore'):
-        # per engine volt: the structure's response times the amplifier's gain
-        H = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=case.controls)
-        T = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=case.limits) if case.limits else np.zeros((g.size, 0, case.st.n_drives), complex)
+        # per engine volt: the structure's response times the amplifier's gain. The linear tier is stepped as the
+        # simulator steps it (its fitted filters, pyloop/fitted.py); a jointed structure through its own step
+        if is_fitted(case.st):
+            Hall = case.gain * FittedModal(case.st, rows, case.fs).frf(g)
+        else:
+            Hall = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=rows)
+    H, T = Hall[:, :n], Hall[:, n:]
     # C order: the laws' grid smoothing (carried.smooth_grid) reshapes in place and needs it
     H, T = np.ascontiguousarray(H), np.ascontiguousarray(T)
     if not (np.all(np.isfinite(H)) and np.all(np.isfinite(T))):
         raise Refused('the small-signal response is not finite on the identification\'s lines')
     return Identification(g, H, T, np.ones((g.size, H.shape[1])), np.ones((g.size, T.shape[1])), np.ones(g.size, bool),
-                          dict(what='exact small-signal response (reference_model.discrete_frf)'))
+                          dict(what='exact small-signal response of the stepped structure (pyloop/fitted.py for the '
+                                    'linear tier, reference_model.discrete_frf otherwise)'))
 
 
 def identification_from_run(case, run_dir):
@@ -244,7 +252,9 @@ def identification_from_run(case, run_dir):
     ig = run['identification']
     lg = ig['law_given']
     n, p, m = len(case.controls), len(case.limits), case.st.n_drives
-    if (lg['controls'], lg['limits'], lg['drives']) != (case.raw['controls'], case.limit_names, case.drive_names):
+    rs = run['structure']
+    if ((rs['controls'], rs['limits'], rs['drives']) != (case.raw['controls'], case.limit_names, case.drive_names)
+            or (lg['controls'], lg['limits'], lg['drives']) != (n, p, m)):
         raise Refused('the identification file is not for these controls, limit channels and drives')
     if run['structure']['sha256'] != case.raw['structure']['sha256']:
         raise Refused('the identification file is not of this structure')
@@ -390,6 +400,7 @@ class Station:
         self.phi = 0.0
         self.env = np.zeros(case.st.n_modes)
         self.alpha = None
+        self.fitted = FittedModal(case.st, self.rows, case.fs) if is_fitted(case.st) else None
 
     def set_bandwidth(self, f):
         self.alpha = float(np.clip(tracking_bw(f) / (NOISE_GAIN_PER_ALPHA * self.case.fs), 1e-12, 0.5))
@@ -404,10 +415,13 @@ class Station:
         self.phi = float(np.mod(phi[-1], TWO_PI))
         c, s = np.cos(phi), np.sin(phi)
         d = Dn.real * c[:, None] - Dn.imag * s[:, None]                # engine volts
-        r = rm.simulate_level(self.case.st, d * self.case.gain, fs, rows=self.rows, state=self.state)
-        self.state = r.state
-        self.env = r.envelope if self.case.st.rules is not None else self.env
-        y = r.outputs
+        if self.fitted is not None:                                  # the linear tier, as the simulator steps it
+            y = self.fitted.step(d * self.case.gain)
+        else:
+            r = rm.simulate_level(self.case.st, d * self.case.gain, fs, rows=self.rows, state=self.state)
+            self.state = r.state
+            self.env = r.envelope if self.case.st.rules is not None else self.env
+            y = r.outputs
         if self.case.noise_rms > 0:
             y = y + self.rng.normal(size=y.shape) * self.case.noise_rms
         a = self.alpha

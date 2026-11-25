@@ -226,6 +226,28 @@ class TestScorer(unittest.TestCase):
         self.assertLess(a['share_inside'], 0.99)
         self.assertTrue(600 < a['at_hz'] < 700)
 
+    def test_reads_a_whole_bin_row_given_as_null(self):
+        # the runner writes a bin with no judged update as null for the whole row, not as a row of nulls: both forms
+        # must read the same
+        d = tempfile.mkdtemp(dir=TMP)
+        synth.make_run(P(), 'T1', d)
+        r = json.load(open(os.path.join(d, 'run.json')))
+        h = r['history']
+        n = len(h['bin_error_db_min'][0])
+        for k in range(5):
+            h['bin_error_db_min'][k] = [None] * n
+            h['bin_error_db_max'][k] = [None] * n
+        json.dump(r, open(os.path.join(d, 'run.json'), 'w'))
+        with np.errstate(all='ignore'):
+            want = sc.score(P(), d)
+        for k in range(5):
+            h['bin_error_db_min'][k] = None
+            h['bin_error_db_max'][k] = None
+        json.dump(r, open(os.path.join(d, 'run.json'), 'w'))
+        with np.errstate(all='ignore'):
+            got = sc.score(P(), d)
+        self.assertEqual(got['amplitude'], want['amplitude'])
+
     def test_amplitude_finds_a_bin_extreme_between_points(self):
         c = self.score('T1', bin_bump_db=(1234.0, 5.0))
         a = c['amplitude']['iec_check_point']
@@ -456,8 +478,8 @@ class TestHarness(unittest.TestCase):
         rows = [names.index(x) for x in r['structure']['controls']]
         C = np.array(h['control_re'][-1]) + 1j * np.array(h['control_im'][-1])
         D = np.array(h['drive_re'][-2]) + 1j * np.array(h['drive_im'][-2])
-        with np.errstate(all='ignore'):
-            H = rm.discrete_frf(st, [h['frequency_hz'][-1]], sm.FS, rows=rows)[0]
+        from pyloop.fitted import FittedModal
+        H = FittedModal(st, rows, sm.FS).frf([h['frequency_hz'][-1]])[0]     # the linear tier as the simulator steps it
         # the drive in the file is engine volts; the structure was played it times the case's gain
         g = r['settings']['drive_gain']
         case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))
@@ -492,10 +514,11 @@ class TestHarness(unittest.TestCase):
         sha = hashlib.sha256(open(os.path.join(d, 'law_identification.f8'), 'rb').read()).hexdigest()
 
         def write(t):
-            run = dict(structure=dict(sha256=case.raw['structure']['sha256'], fs_hz=case.fs),
+            run = dict(structure=dict(sha256=case.raw['structure']['sha256'], fs_hz=case.fs, controls=case.raw['controls'],
+                                      limits=[], drives=case.drive_names),
                        identification=dict(source='engine', ideal_vs_measured=dict(delay_turn_samples=t),
                                            law_given=dict(file='law_identification.f8', sha256=sha, lines=int(g.size),
-                                                          controls=case.raw['controls'], limits=[], drives=case.drive_names)))
+                                                          controls=n, limits=0, drives=m)))
             json.dump(run, open(os.path.join(d, 'run.json'), 'w'))
             return hz.identification_from_run(case, d)
         got = write(turn)
@@ -509,6 +532,33 @@ class TestHarness(unittest.TestCase):
         json.dump(run, open(os.path.join(d, 'run.json'), 'w'))
         with self.assertRaises(hz.Refused):
             hz.identification_from_run(case, d)
+
+    def test_the_linear_tier_is_stepped_as_the_simulator_steps_it(self):
+        # the simulator's fitted filters (hertzforge-hal-sim fitted.rs) match the continuous response delayed `delay`
+        # samples to well under 0.01 dB in band; the reference model's triangle hold, which the harness used before,
+        # does not; stepping a tone through the filters gives their own response
+        import reference_model as rm
+        from pyloop.fitted import FittedModal
+        st = rm.load_structure(P(LIN))
+        rows = [i for i, o in enumerate(st.outputs) if o['role'] == 'control']
+        f = np.geomspace(20.0, 2000.0, 400)
+        fm = FittedModal(st, rows, sm.FS)
+        with np.errstate(all='ignore'):
+            Hc = rm.frf(st, f, rows=rows) * np.exp(-2j * np.pi * f * fm.delay / sm.FS)[:, None, None]
+            Ht = rm.discrete_frf(st, f, sm.FS, rows=rows) * np.exp(-2j * np.pi * f * fm.delay / sm.FS)[:, None, None]
+
+        def worst(Hx):
+            return float((np.abs(Hx - Hc).reshape(f.size, -1).max(1) / np.abs(Hc).reshape(f.size, -1).max(1)).max())
+        self.assertLess(worst(fm.frf(f)), 1e-3)
+        self.assertGreater(worst(Ht), 1e-2)
+        f0, D = 1234.5, np.array([1.0, 0.5j, -0.3, 0.2, 0.0, 0.1])
+        t = np.arange(int(2 * sm.FS)) / sm.FS
+        d = (D[None, :] * np.exp(2j * np.pi * f0 * t)[:, None]).real
+        y = np.concatenate([fm.step(d[i:i + 82]) for i in range(0, t.size, 82)])
+        seg = slice(t.size - 8192, t.size)
+        got = 2 * (y[seg] * np.exp(-2j * np.pi * f0 * t[seg])[:, None]).mean(0)
+        want = fm.frf([f0])[0] @ D
+        self.assertLess(np.abs(got - want).max() / np.abs(want).max(), 1e-6)
 
     def test_refuses_a_case_whose_structure_changed(self):
         case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))
