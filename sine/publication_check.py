@@ -4,7 +4,9 @@ the structure under test, a local path, or a listed name.
     python sine/publication_check.py <file or folder> [...] [--workers 6]
 
 Reads every file under the paths given. Text files are read line by line; a binary file (the .f8 and .c16 arrays) is
-searched for path bytes only. Three findings, each giving the place, never the word:
+searched for path bytes only: the home folder and the slash prefixes as bytes; a drive prefix (`C:\`) only when 8 or
+more printable characters follow it, because three bytes turn up by chance in a megabyte of floating-point numbers (69
+arrays of the 380 problems held one). Three findings, each giving the place, never the word:
   word    the whole word the set avoids for the structure under test ('system' is used), singular or plural
   path    a local path: the home folder of the account running the check, its last part as a word, or any of the
           absolute prefixes listed in PATH_PREFIXES, or a path from the home folder written with '~/'
@@ -41,6 +43,7 @@ AVOIDED = re.compile(r'\bplants?\b', re.IGNORECASE)
 PATH_PREFIXES = ('/Users/', '/home/', '/private/', '/Volumes/', '/tmp/', 'C:\\', 'c:\\')
 _TILDE = re.compile(r'(?<![A-Za-z0-9])~/[A-Za-z]')
 BINARY = ('.f8', '.c16', '.f4', '.i4', '.npy', '.bin')
+_DRIVE_BYTES = re.compile(rb'[Cc]:\\[\x20-\x7e]{8}')
 
 
 def phrase_hash(text):
@@ -82,7 +85,8 @@ def check_file(args):
     home, user = _home()
     data = open(path, 'rb').read()
     if path.endswith(BINARY):
-        hits = [p for p in (home.encode(),) + tuple(x.encode() for x in PATH_PREFIXES) if p in data]
+        hits = [p for p in (home.encode(),) + tuple(x.encode() for x in PATH_PREFIXES if ':' not in x) if p in data]
+        hits += _DRIVE_BYTES.findall(data)
         return [f'{rel}: binary: a local path'] if hits else []
     try:
         text = data.decode('utf-8')

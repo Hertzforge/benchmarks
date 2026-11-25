@@ -364,6 +364,19 @@ class TestPublication(unittest.TestCase):
         finally:
             shutil.rmtree(d)
 
+    def test_a_drive_prefix_in_an_array_counts_only_as_a_path(self):
+        # three bytes 'C:' and a backslash turn up by chance in floating-point arrays; a path written into one is found
+        d = tempfile.mkdtemp()
+        try:
+            drive = 'C' + ':' + chr(92)
+            open(os.path.join(d, 'chance.f8'), 'wb').write(np.zeros(3).tobytes() + drive.encode() + bytes([0, 200, 7, 1]) + np.ones(3).tobytes())
+            open(os.path.join(d, 'path.f8'), 'wb').write(np.zeros(3).tobytes() + (drive + 'Users' + chr(92) + 'someone').encode())
+            n, found = pub.run([d])
+            kinds = sorted(os.path.basename(f.split(': ')[0]) for f in found)
+            self.assertEqual(kinds, ['path.f8'])
+        finally:
+            shutil.rmtree(d)
+
     def test_listed_name_by_hash(self):
         names = frozenset({pub.phrase_hash('Example Widget Works')})
         self.assertTrue(pub.check_text('x', 'made by example widget works ltd', names))
