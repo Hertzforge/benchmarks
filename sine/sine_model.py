@@ -50,7 +50,9 @@ STEP_MIN_CYCLES = 20           # in seconds, the same at every step; at least 20
 DWELL_SETTLE_TAU = 20.0        # T4: 20 time constants of the dwell mode to settle at full level (ten loop time constants at
 DWELL_JUDGE_TAU = 10.0         # the loop-speed rule's 2 tau_m), 10 more to judge
 DWELL_MIN_S = 10.0             # and at least 10 s (1,000 updates at a 10 ms update)
-LADDER = dict(sysid_level_db=-20.0, start_db=-12.0, table_db=[-12.0, -6.0, 0.0], per_rung=dict(seconds=2.0),
+# the engine's default level table (LadderConfig: -12, -9, -6, -3, 0 dB) with the runner's default rung (2 s): a one-level
+# run on a realistic structure aborts at the end of the settle window (Did_Not_Work DNW-A2), so every test climbs in 3 dB rungs
+LADDER = dict(sysid_level_db=-20.0, start_db=-12.0, table_db=[-12.0, -9.0, -6.0, -3.0, 0.0], per_rung=dict(seconds=2.0),
               full_for=dict(sweeps=1, what='sweeps: one pass; stepped and dwell: until the schedule ends'),
               what='the engine ladder in its own form (LadderConfig); judged at the last rung (full level) only')
 NOISE_REL = 1e-3               # measurement noise on every read channel, relative to the full-level specification amplitude

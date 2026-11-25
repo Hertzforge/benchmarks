@@ -126,8 +126,11 @@ change, damping factor, the largest drop and rise, and the highest frequency rea
 
 ## 5. The Tests
 
-Every test runs a ladder before its judged level: levels -12, -6 and 0 dB against full level, each
-rung but the last held 2 s, the last held to the end of the test (the runner's `ladder`). The
+Every test runs a ladder before its judged level: levels -12, -9, -6, -3 and 0 dB against full
+level (the engine's default level table), each rung but the last held 2 s (the runner's default
+rung), the last held to the end of the test (the runner's `ladder`). A one-level run on a realistic
+structure aborts at the end of the settle window (the runner's experiment MSNB-A-E1), so every test
+climbs. The
 engine identifies at its own level (-20 dB, its default) first. Judged: updates at full level, the
 law's answer used, outside the engine's settle window (the runner's `judged`), and for a step or a
 dwell outside the suite's own settle window, counted from the first full-level update of the step
@@ -183,7 +186,7 @@ relative to the problems folder, the runner's `--root`.
 | `test` | sweep: `band_hz`, `rate_oct_per_min`, `direction`; stepped: `band_hz`, `steps_per_octave`, `step_s`; dwell: `freq_hz`, `dwell_s` |
 | `reference` | `<problem>/case_reference.json`, its SHA-256, `phase` `auto` |
 | `full_level_scale` | 1 (the reference file is at full level) |
-| `ladder` | `levels_db` [-12, -6, 0], `rung` `{"seconds": 2}` |
+| `ladder` | `levels_db` [-12, -9, -6, -3, 0], `rung` `{"seconds": 2}` |
 | `noise` | `rms_m_s2` (1e-3 of the specification), `seed` |
 | `limits` | L1 only: the gauge's output name and the flat bound on [20, 2000] Hz |
 | `protective` | `default` (what a user's run gets) |

@@ -25,7 +25,7 @@ def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0
     pr = sc.Problem(problem)
     test = pr.tests[test_id]
     st = pr.st
-    lad = [-12.0, -6.0]
+    lad = list(sm.LADDER['table_db'][:-1])
     if test['kind'] == 'sweep':
         rate = test['rate_oct_per_min'] * rate_factor
         lo, hi = test['band_hz']
@@ -53,13 +53,14 @@ def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0
         keep = max(2, int(stop_fraction * f.size))
         f, t = f[:keep], t[:keep]
     # the ladder's rungs before the judged level, at the first frequency, 2 s each, every 0.5 s
-    fr = np.full(8, f0)
-    tr = np.arange(1, 9) * 0.5
+    nr = 4 * len(lad)
+    fr = np.full(nr, f0)
+    tr = np.arange(1, nr + 1) * 0.5
     lv = np.repeat(lad, 4)
     f_all = np.concatenate([fr, f])
-    t_all = np.concatenate([tr, 4.0 + t])
+    t_all = np.concatenate([tr, 2.0 * len(lad) + t])
     lvl = np.concatenate([lv, np.zeros(f.size)])
-    judged = np.concatenate([np.zeros(8, bool), np.full(f.size, not all_unjudged)])
+    judged = np.concatenate([np.zeros(nr, bool), np.full(f.size, not all_unjudged)])
     R = pr.reference_at(f_all) * 10 ** (lvl / 20)[:, None]
     g = np.zeros((f_all.size, R.shape[1]))
     if gain_db is not None:
