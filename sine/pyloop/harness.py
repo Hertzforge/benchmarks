@@ -71,14 +71,15 @@ LAWS = {
 # only, the test types it accepts, the parameters a case may set). Defaults are the testbed classes' own except where
 # a comment says (FORMAT_SINE.md, "The Candidate Laws").
 K2F_EXPECTED_DROP = 0.05            # K2f's expected full-level drop: the tuning structures' median change (FORMAT_SINE)
+K34_MODAL_FIT = 'm7d'               # K3's and K4's modal fit: Package C's M7d with the known delay (Package G)
 CANDIDATES = {
     'k2f': (FamilyInverse, dict(expected_drop=K2F_EXPECTED_DROP, expected_damp=1.0, modal_fit='current'), False,
             ('sweep', 'stepped'), ('expected_drop', 'expected_damp', 'span_margin', 'spacing_bw', 'max_members', 'mu',
                                    'modal_fit')),
-    'k3': (FollowedPoles, dict(modal_fit='current'), False, ('sweep',),
+    'k3': (FollowedPoles, dict(modal_fit=K34_MODAL_FIT), False, ('sweep',),
            ('window', 'fit_every', 'near_bw', 'prior_bw', 'prior_lnz', 'range_bw', 'step_bw', 'data_rel', 'gate_snr',
             'iters', 'gate', 'gate_ratio', 'fallback', 'expected_drop', 'expected_damp', 'modal_fit')),
-    'k4': (LevelLadder, dict(modal_fit='current'), False, ('sweep',),
+    'k4': (LevelLadder, dict(modal_fit=K34_MODAL_FIT), False, ('sweep',),
            ('predict', 'p_default', 'q_default', 'fit_bw', 'fit_frac', 'min_points', 'fit_iters', 'modal_fit')),
     'k5': (RLSDither, {}, False, ('dwell',), ('dither', 'lam', 'period', 'deadband_db', 'dither_in_deadband',
                                              'dither_on')),
@@ -634,6 +635,23 @@ def pipeline_for(case, idn, gid):
     return P, L, 'the engine run\'s identification'
 
 
+def block_delay_samples(case):
+    """The simulator block's own delay, in samples, as the structure file declares it: the fitted discretization's
+    `delay` on the linear tier (pyloop/fitted.py: each mode's response delayed that many samples), otherwise the
+    common `transport_delay_samples` plus the equalized step's `half_taps` (reference_model.discrete_frf: the delay on
+    every path). None when the controls carry their own output delays (no single delay). This is the identification's
+    pure delay; the lag the engine measures (`lag_frames`, a cross-correlation's peak) is not: on frame-6x6-realistic
+    s00 the lag less the pipeline is 8 samples where the block's delay is 2 (Package G, port_check.py)."""
+    sim = case.st.raw.get('simulator') or {}
+    if is_fitted(case.st):
+        return float(sim['discretization']['delay'])
+    od = sim.get('output_delays_s') or []
+    if len(od) and any(abs(float(od[i])) > 0.0 for i in case.controls):
+        return None
+    step = rm.step_of(case.st)
+    return float(int(sim.get('transport_delay_samples', 0)) + (0 if step is None else step[1]))
+
+
 def run_case(case, ident=None, guard_ident=None, pipeline=True):
     """`ident` is the law's identification (the exact response when None); `guard_ident` the controller's own, for the
     settle window, the first drive's bound and the notch's predictions (`ident` when None). The runner with
@@ -642,6 +660,13 @@ def run_case(case, ident=None, guard_ident=None, pipeline=True):
     t_wall = time.perf_counter()
     idn = identify(case) if ident is None else ident
     gid = idn if guard_ident is None else guard_ident
+    # the delay the law's identification holds: the simulator block's own (an engine run's file is turned back to it),
+    # what a loopback measures on a real station; the modal fits m7d and m9d take it out before fitting (modal_fits.py)
+    same = gid is idn
+    idn = copy.copy(idn)
+    idn.block_delay = (block_delay_samples(case), case.fs)
+    if same:
+        gid = idn
     pipe = None
     if pipeline:
         P, L, lag_src = pipeline_for(case, idn, gid)
@@ -896,7 +921,20 @@ def run_case(case, ident=None, guard_ident=None, pipeline=True):
         f = f_next
         sta.set_bandwidth(f)
     return rec, end, dict(over_ceiling_samples=over_ceiling_samples, largest=largest, wall_s=time.perf_counter() - t_wall,
-                          ident=idn, guard_ident=None if guard_ident is None else gid, pipeline=pipe)
+                          ident=idn, guard_ident=None if guard_ident is None else gid, pipeline=pipe,
+                          modal_form=modal_form_record(law))
+
+
+def modal_form_record(law):
+    """The modal form a candidate law is built on, for the run file: its source (which fit, the known delay), the
+    number of modes and their frequencies and damping. None for a law with no modal form."""
+    mf = getattr(law, 'mf', None)
+    if mf is None:
+        mf = getattr(getattr(law, 'M', None), 'mf', None)
+    if mf is None or not hasattr(mf, 'f0'):
+        return None
+    return dict(source=str(mf.source), modes=int(mf.M), delay_s=getattr(mf, 'delay_s', None),
+                f_hz=[float(x) for x in mf.f0], zeta=[float(x) for x in mf.z0])
 
 
 # ---------------------------------------------------------------------------------------------- the run file
@@ -970,7 +1008,7 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
                               controls=case.raw['controls'], limits=case.limit_names, drives=case.drive_names,
                               n_modes=int(st.n_modes), fs_hz=case.fs, tick_s=case.dt, tick_frames=case.tick_n),
                law=dict(id=case.law_id, params={}, python=case.law_cls.__name__, python_params=case.law_params,
-                        phase_specified=case.phase_specified),
+                        phase_specified=case.phase_specified, modal_form=info.get('modal_form')),
                settings=dict(protective=case.protective_name, **case.protective, max_step_db=MAX_STEP_DB,
                              max_rise_db_per_s=MAX_RISE_DB_PER_S, rotation_cap_deg=None, law_misses=LAW_MISSES,
                              ceiling_vpk=case.ceiling, abort_vpk=case.abort_vpk, drive_gain=case.gain, ladder_db=case.levels,

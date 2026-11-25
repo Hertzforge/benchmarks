@@ -226,8 +226,9 @@ _FIT_CACHE = {}
 
 
 # The modal fits a law can be built on, by name (the suite's switch, Package F). 'current': the research round's fit
-# (ModalForm.fit, peak picking and a local least-squares fit of each group). The modal-fit package's fit is added here
-# under its own name when it reports; a law's `modal_fit` parameter chooses.
+# (ModalForm.fit, peak picking and a local least-squares fit of each group). 'm7d' and 'm9d': the modal-fit package's
+# M7d and M9d with the harness's known delay (modal_fits.py, Package G), added at the end of this file. A law's
+# `modal_fit` parameter chooses.
 MODAL_FITS = {'current': lambda ident, band: ModalForm.fit(ident, band)}
 
 
@@ -241,11 +242,14 @@ def modal_form(setup, truth=None, cache_dir=None, fit='current'):
     import hashlib
     import os
     key = hashlib.sha1(np.ascontiguousarray(setup.ident.H0).tobytes()).hexdigest()[:16]
-    if fit != 'current':
-        key = f'{fit}-{key}'
+    if fit != 'current':                        # a fit that reads the known delay is keyed by it too
+        key = f"{fit}-{key}-{getattr(setup.ident, 'block_delay', None)}-{tuple(setup.band)}"
     if key in _FIT_CACHE:
-        f0, z0, A = _FIT_CACHE[key]
-        return ModalForm(setup.ident, f0, z0, A, 'fit')
+        f0, z0, A, src, tau = _FIT_CACHE[key]
+        mf = ModalForm(setup.ident, f0, z0, A, src)
+        if tau is not None:
+            mf.delay_s = tau
+        return mf
     path = os.path.join(cache_dir, key + '.npz') if cache_dir else None
     if path and os.path.exists(path):
         z = np.load(path)
@@ -255,7 +259,7 @@ def modal_form(setup, truth=None, cache_dir=None, fit='current'):
         if path:
             os.makedirs(cache_dir, exist_ok=True)
             np.savez(path, f0=mf.f0, z0=mf.z0, A=mf.A)
-    _FIT_CACHE[key] = (mf.f0, mf.z0, mf.A)
+    _FIT_CACHE[key] = (mf.f0, mf.z0, mf.A, mf.source, getattr(mf, 'delay_s', None))
     return mf
 
 
@@ -678,3 +682,8 @@ REGISTRY = {
     'K2f': (FamilyInverse, dict(_expect=1.0)),
     'K2f_2bw': (FamilyInverse, dict(_expect=1.0, spacing_bw=2.0)),
 }
+
+
+# the modal-fit package's fits (Package G): imported last, as modal_fits.py reads ModalForm and q_full from here and
+# adds its fits to MODAL_FITS itself (so either module may be imported first)
+from . import modal_fits as _package_c_fits  # noqa: E402,F401

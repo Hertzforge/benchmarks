@@ -863,5 +863,175 @@ class TestCandidates(unittest.TestCase):
         self.assertNotEqual(RLSDither(s1)._period(f), RLSDither(s0)._period(f), 'the check cannot fail')
 
 
+
+def _synth_setup(idn, delay_samples):
+    from pyloop.interface import Setup
+    import synth_modal as sy
+    n, m = idn.H0.shape[1], idn.H0.shape[2]
+    s = Setup(n=n, m=m, p=0, dt_c=0.01, fs=sy.FS, band=sy.BAND, drive_ceiling=np.full(m, 2.0), ident=idn,
+              ref_grid=np.ones((idn.grid_hz.size, n), complex), phase_specified=True,
+              limit_grid=np.zeros((idn.grid_hz.size, 0)), alarm_db=1.5, abort_db=20.0, shape='tall' if n > m else 'square',
+              tracking=dict(mode='proportional', pct=10.0, max_hz=100.0))
+    s.tracker_delay_factor, s.transport_delay_s = 0.625, (264 + (delay_samples or 0)) / sy.FS
+    if delay_samples is not None:
+        idn.block_delay = (delay_samples, sy.FS)
+    return s
+
+
+class TestModalFitM7d(unittest.TestCase):
+    """Package C's M7d and M9d in the harness, with the harness's known delay (Package G): each check is shown to fail
+    on a case built to break it."""
+
+    def fit(self, which='m7d', delay=3.0, tau_given=None):
+        from pyloop import modal_fits as MF
+        import synth_modal as sy
+        idn, tru, tau = sy.identification(delay_samples=delay)
+        t = tau if tau_given is None else tau_given
+        with np.errstate(all='ignore'):
+            out = getattr(MF, which)(idn, sy.BAND, t, sub_bands=MF.octave_sub_bands(sy.BAND))
+        return out, tru, tau
+
+    def test_the_port_is_package_cs_fit(self):
+        # Package C's own code wrote the vector on the same identifications (experiments/G/make_m7d_vector.py): the
+        # synthetic one at noise 1e-3 and at 0.1 (where the clustering's MAC and share thresholds bind)
+        from pyloop import modal_fits as MF
+        import synth_modal as sy
+        with open(os.path.join(HERE, 'data', 'm7d_parity.json')) as fh:
+            v = json.load(fh)
+        idq, _, tq = sy.identification(noise=v['noisy']['noise'])
+        for which, vv in (('m7d', v), ('m9d', v), ('m7d', v['noisy']), ('m9d', v['noisy'])):
+            if vv is v:
+                (f, z, A), _, tau = self.fit(which)
+            else:
+                tau = tq
+                with np.errstate(all='ignore'):
+                    f, z, A = getattr(MF, which)(idq, sy.BAND, tq, sub_bands=MF.octave_sub_bands(sy.BAND))
+            self.assertAlmostEqual(tau, vv['tau_s'], places=15)
+            w = vv[which]
+            Aw = np.array(w['A_re']) + 1j * np.array(w['A_im'])
+            self.assertEqual(f.size, len(w['f']), which)
+            self.assertLess(np.max(np.abs(f - w['f']) / np.array(w['f'])), 1e-9, which)
+            self.assertLess(np.max(np.abs(z - w['zeta']) / np.array(w['zeta'])), 1e-7, which)
+            self.assertLess(np.linalg.norm(A - Aw) / np.linalg.norm(Aw), 1e-7, which)
+
+    @NEEDS
+    def test_the_port_is_package_cs_fit_on_a_frame_band(self):
+        # near-repeated modes of a frame: the harness's identification of frame-6x6-realistic_s00, 250 to 500 Hz, the
+        # block's delay given; Package C's own code wrote the vector (experiments/G/make_m7d_vector.py)
+        from pyloop import harness as hz
+        from pyloop import modal_fits as MF
+        with open(os.path.join(HERE, 'data', 'm7d_parity.json')) as fh:
+            v = json.load(fh)['frame']
+        self.assertEqual(v['problem'], SID)
+        case = hz.Case(os.path.join(P(SID), 'cases', 'T1__matrix.json'), os.path.join(TMP, 'problems'))
+        idn = hz.identify(case)
+        tau = hz.block_delay_samples(case) / case.fs
+        self.assertAlmostEqual(tau, v['tau_s'], places=15)
+        band = tuple(v['band'])
+        for which in ('m7d', 'm9d'):
+            with np.errstate(all='ignore'):
+                f, z, A = getattr(MF, which)(idn, band, tau, sub_bands=MF.octave_sub_bands(band))
+            w = v[which]
+            Aw = np.array(w['A_re']) + 1j * np.array(w['A_im'])
+            self.assertEqual(f.size, len(w['f']), which)
+            self.assertLess(np.max(np.abs(f - w['f']) / np.array(w['f'])), 1e-9, which)
+            self.assertLess(np.max(np.abs(z - w['zeta']) / np.array(w['zeta'])), 1e-7, which)
+            self.assertLess(np.linalg.norm(A - Aw) / np.linalg.norm(Aw), 1e-7, which)
+
+    def test_the_known_delay_is_taken_out_and_put_back(self):
+        (f, z, A), (ft, zt, At), tau = self.fit('m7d')
+        self.assertEqual(f.size, ft.size)
+        j = [int(np.argmin(np.abs(f - x))) for x in ft]
+        turn = np.exp(-2j * np.pi * ft * tau)[:, None, None]
+        err = [np.linalg.norm(A[j[k]] - At[k] * turn[k]) / np.linalg.norm(At[k]) for k in range(ft.size)]
+        self.assertLess(max(err), 0.02)
+        # the same fit not told the delay: a real rank-one residue cannot hold the turn
+        (f0, z0, A0), _, _ = self.fit('m7d', tau_given=0.0)
+        j0 = [int(np.argmin(np.abs(f0 - x))) for x in ft] if f0.size else []
+        err0 = [np.linalg.norm(A0[j0[k]] - At[k] * turn[k]) / np.linalg.norm(At[k]) for k in range(ft.size)] if f0.size else [1.0]
+        self.assertGreater(max(err0), 0.10, 'the check cannot fail')
+
+    def test_the_fit_reads_the_harness_known_delay_and_refuses_without_it(self):
+        from pyloop import modal
+        import synth_modal as sy
+        idn, _, _ = sy.identification(delay_samples=3.0)
+        with self.assertRaises(ValueError):
+            modal.MODAL_FITS['m7d'](idn, sy.BAND)
+        s = _synth_setup(idn, 3.0)
+        with np.errstate(all='ignore'):
+            mf = modal.modal_form(s, fit='m7d')
+        self.assertIn('known delay 3 samples', mf.source)
+        self.assertAlmostEqual(mf.delay_s, 3.0 / sy.FS, places=15)
+        self.assertEqual(mf.M, len(sy.MODES))
+
+    def test_the_cache_keys_the_known_delay(self):
+        from pyloop import modal
+        import synth_modal as sy
+        idn, (ft, _, _), _ = sy.identification(delay_samples=3.0)
+        with np.errstate(all='ignore'):
+            a = modal.modal_form(_synth_setup(idn, 3.0), fit='m7d')
+            idn2 = sy.identification(delay_samples=3.0)[0]
+            b = modal.modal_form(_synth_setup(idn2, 2.0), fit='m7d')
+        self.assertTrue(np.array_equal(a.ident.H0, b.ident.H0), 'the check cannot fail')
+        self.assertNotEqual(a.source, b.source)
+        self.assertGreater(np.abs(a.A - b.A).max(), 1e-3 * np.abs(a.A).max())
+
+    @NEEDS
+    def test_the_harness_gives_the_law_the_blocks_delay_not_the_lag(self):
+        from pyloop import harness as hz
+        for sid, want in ((SID, 2.0), (LIN, 4.0)):
+            c = json.load(open(os.path.join(P(sid), 'cases', 'T1__matrix.json')))
+            path = os.path.join(tempfile.mkdtemp(dir=TMP), 'case.json')
+            json.dump(c, open(path, 'w'))
+            case = hz.Case(path, os.path.join(TMP, 'problems'))
+            self.assertEqual(hz.block_delay_samples(case), want, sid)
+            idn = hz.identify(case)
+            P_, L, _ = hz.pipeline_for(case, idn, idn)
+            self.assertNotEqual(L - P_, want, 'the check cannot fail: the lag less the pipeline is not the delay')
+        # a structure whose controls carry their own output delays has no single delay
+        case.st.raw = dict(case.st.raw, simulator=dict(case.st.raw['simulator'], output_delays_s=[1e-4] * 64))
+        st_kind = case.st.kind
+        case.st.kind = 'jointed'
+        try:
+            self.assertIsNone(hz.block_delay_samples(case))
+        finally:
+            case.st.kind = st_kind
+
+    def test_k3_and_k4_default_to_m7d(self):
+        from pyloop import harness as hz
+        self.assertEqual(hz.CANDIDATES['k3'][1]['modal_fit'], 'm7d')
+        self.assertEqual(hz.CANDIDATES['k4'][1]['modal_fit'], 'm7d')
+        self.assertEqual(hz.CANDIDATES['k2f'][1]['modal_fit'], 'current')      # the brief changes K3 and K4 only
+        from pyloop import modal
+        self.assertIn('m7d', modal.MODAL_FITS)
+        self.assertIn('m9d', modal.MODAL_FITS)
+        self.assertIn('modal_fit', hz.CANDIDATES['k3'][4])
+
+    @NEEDS
+    def test_a_k3_case_takes_m7d_unless_it_sets_a_fit(self):
+        tc = TestCandidates()
+        tc.write_case = TestCandidates.write_case.__get__(tc)
+        from pyloop import harness as hz
+        c = hz.Case(tc.write_case(test='T1', law='k3'), os.path.join(TMP, 'problems'))
+        self.assertEqual(c.law_params['modal_fit'], 'm7d')
+        c = hz.Case(tc.write_case(test='T1', law='k4', params=dict(modal_fit='m9d')), os.path.join(TMP, 'problems'))
+        self.assertEqual(c.law_params['modal_fit'], 'm9d')
+
+    def test_the_law_built_on_it_and_the_run_file_record(self):
+        from pyloop import harness as hz
+        from pyloop.modal import FollowedPoles
+        from pyloop.k4_ladder import LevelLadder
+        import synth_modal as sy
+        for cls in (FollowedPoles, LevelLadder):
+            idn, _, _ = sy.identification(delay_samples=3.0)
+            with np.errstate(all='ignore'):
+                law = cls(_synth_setup(idn, 3.0), modal_fit='m7d')
+            r = hz.modal_form_record(law)
+            self.assertEqual(r['modes'], len(sy.MODES), cls.__name__)
+            self.assertIn('m7d', r['source'])
+            self.assertAlmostEqual(r['delay_s'], 3.0 / sy.FS, places=15)
+        self.assertIsNone(hz.modal_form_record(object()))
+
+
 if __name__ == '__main__':
     unittest.main()

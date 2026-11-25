@@ -388,8 +388,8 @@ them `specified`). A case may set the parameters listed; everything else is the 
 | Id | Testbed class (source) | Tests | Defaults that differ from the testbed's | Parameters a case may set |
 |---|---|---|---|---|
 | `k2f` | `FamilyInverse` (`drafts/D1/laws/d1_modal_laws.py`, the suite's `pyloop/modal.py`, the same code) | sweep, stepped | `expected_drop` 0.05 (a drop, the tuning structures' median full-level change, 4.8 to 5.4 %); `expected_damp` 1. The testbed was handed the true shift (study only); without one the family has one member and is the carried loop through the modal form | `expected_drop`, `expected_damp`, `span_margin` (1.5), `spacing_bw` (1.0), `max_members` (9), `mu` (1e-3), `modal_fit` |
-| `k3` | `FollowedPoles` (same files) | sweep | none (`window` 40, `fit_every` 2, `near_bw` 4, `prior_bw` 4, `prior_lnz` 1, `range_bw` 12, `step_bw` 0.25, `data_rel` 0.02, `gate_snr` 1, `iters` 2, `gate` on, `gate_ratio` 2, `fallback` frozen) | those, `expected_drop`, `expected_damp` (for the family fallback), `modal_fit` |
-| `k4` | `LevelLadder` (`drafts/D2/k4_ladder.py`; `pyloop/k4_ladder.py`) | sweep | the model: the testbed's class takes only the true shapes and poles (study only); here the law's own modal fit, each residue made rank one, the identification's smoothed remainder kept (`FittedModalModel`) | `predict` (on), `p_default` (1), `q_default` (1), `fit_bw` (3), `fit_frac` (0.5), `min_points` (5), `fit_iters` (2), `modal_fit` |
+| `k3` | `FollowedPoles` (same files) | sweep | `modal_fit` `m7d` (Package G); otherwise none (`window` 40, `fit_every` 2, `near_bw` 4, `prior_bw` 4, `prior_lnz` 1, `range_bw` 12, `step_bw` 0.25, `data_rel` 0.02, `gate_snr` 1, `iters` 2, `gate` on, `gate_ratio` 2, `fallback` frozen) | those, `expected_drop`, `expected_damp` (for the family fallback), `modal_fit` |
+| `k4` | `LevelLadder` (`drafts/D2/k4_ladder.py`; `pyloop/k4_ladder.py`) | sweep | the model: the testbed's class takes only the true shapes and poles (study only); here the law's own modal fit (`modal_fit` `m7d`, Package G), each residue made rank one, the identification's smoothed remainder kept (`FittedModalModel`) | `predict` (on), `p_default` (1), `q_default` (1), `fit_bw` (3), `fit_frac` (0.5), `min_points` (5), `fit_iters` (2), `modal_fit` |
 | `k5` | `RLSDither` (`drafts/D2/k5_rls_dither.py`; `pyloop/k5_rls_dither.py`) | dwell | none (`dither` 0.01 on the response, `lam` 0.98, `period` the settle time, no dead band) | `dither`, `lam`, `period`, `deadband_db`, `dither_in_deadband`, `dither_on` |
 
 The carried loop under `k2f` and `k3` (`pyloop/carried.py`, catalog K1) keeps its testbed defaults: `g` 0.5 with the
@@ -403,9 +403,26 @@ prediction of the readings still runs the testbed's two one-pole tracker stages,
 (`07_Research/MIMO_Sine_Benchmark/experiments/F/port_check.py`).
 
 **The modal fit switch.** `modal_fit` names the fit a modal law is built on (`pyloop/modal.py` `MODAL_FITS`):
-`current` is the research round's (`ModalForm.fit`). The modal-fit package's fit is added under its own name when it
-reports; the default stays `current` until the lead changes it. `k2f`, `k3` and `k4` all rest on the fit (K2f's
-family is built from the modal form's poles).
+`current` is the research round's (`ModalForm.fit`); `m7d` and `m9d` are the modal-fit package's M7d and M9d
+(Package C, `07_Research/MIMO_Sine_Benchmark/C_Modal_Fit.md` sections 4 to 6), ported line for line in
+`pyloop/modal_fits.py` (Package G). **`k3` and `k4` default to `m7d`; `k2f` stays on `current`.** `k2f`, `k3` and `k4`
+all rest on the fit (K2f's family is built from the modal form's poles).
+
+M7d: half-octave pLSCF fit ranges overlapping a quarter octave, orders 12 to 24, poles clustered over the orders (1 %
+in frequency, 25 % in damping, participation MAC 0.8, in half the orders or more); LSFD with real rank-one residues and
+a background of 1, (fc/f)^2 and (f/fc)^2; modes under a tenth of the response in their own window dropped and the
+LSFD repeated. M9d adds a weighted variable-projection refinement (at most 8 steps). Both take a pure delay out of the
+identification before the fit and put it back on the residues at each mode's frequency. **The delay is the simulator
+block's own, read from the structure file** (`harness.py` `block_delay_samples`: the fitted discretization's `delay`
+on the linear tier, 4 samples; otherwise `transport_delay_samples` plus the equalized step's `half_taps`, 2 on the
+jointed tiers; none, and the fit refused, when the controls carry their own output delays), set on the law's
+identification as `block_delay`: the delay a loopback measures on a real station. It is not estimated (Package C's
+estimate is the fallback it recommends against) and it is not the engine's lag: the lag less the pipeline is a
+cross-correlation's peak, 8 samples on frame-6x6-realistic s00 and 14 on frame-12x6 s00, and a fit with it is worse
+than a fit with no delay taken out (Package G, `experiments/G/port_check.py`). The port is checked against Package C's
+code on three identifications (`tests/data/m7d_parity.json`, written by C's code) and is the same to the last bit on
+the two frames of the port check. A run file's `law.modal_form` records the fit's source, its known delay and its
+modes.
 
 **K4's passes.** K4 fits each mode after a pass at one level and predicts the next. Under the suite's ladder (2 s
 rungs at the start of the test) a pass covers the first seconds of the band and meets no mode, so K4 is the carried
