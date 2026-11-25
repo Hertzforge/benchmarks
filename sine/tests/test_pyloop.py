@@ -82,5 +82,18 @@ class TestPairedFirstDrive(unittest.TestCase):
         self.assertGreater(np.abs(20 * np.log10(np.abs(H @ plain) / np.abs(R))).max(), 1.0, 'the check cannot fail')
 
 
+class TestTimeLimit(unittest.TestCase):
+    def test_a_stepped_sines_time_limit_is_the_runners(self):
+        # the runner's max_test_s for frame-6x6 s00 T3 (20 to 2000 Hz, 12 steps an octave, 5 rungs of 2 s), read from
+        # its run file
+        from pyloop.harness import test_length_s
+        t = {'type': 'stepped', 'band_hz': [20.0, 2000.0], 'steps_per_octave': 12, 'step_s': 1.842905623287886}
+        got = 1.5 * (test_length_s(t) + 4 * 2.0) + 60.0
+        self.assertAlmostEqual(got, 420.51012706994237, places=9)
+        from pyloop.harness import step_grid
+        self.assertNotAlmostEqual(1.5 * (len(step_grid(t)) * t['step_s'] + 8.0) + 60.0, 420.51012706994237, places=3,
+                                  msg='the check cannot fail')
+
+
 if __name__ == '__main__':
     unittest.main()

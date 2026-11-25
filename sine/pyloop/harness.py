@@ -183,12 +183,7 @@ class Case:
         self.max_test_s = float(c['max_test_s']) if c.get('max_test_s') else 1.5 * (self.test_length_s() + rungs) + 60.0
 
     def test_length_s(self):
-        t = self.test
-        if t['type'] == 'sweep':
-            return 60.0 * np.log2(t['band_hz'][1] / t['band_hz'][0]) / t['rate_oct_per_min']
-        if t['type'] == 'stepped':
-            return len(step_grid(t)) * t['step_s']
-        return t['dwell_s']
+        return test_length_s(self.test)
 
     def reference_at(self, f):
         """The full-level reference at f (controls,): amplitude in log-log between lines, phase linear in log
@@ -205,6 +200,16 @@ class Case:
 
     def bounds_at(self, f):
         return np.array([float(loglog(f, fb, ab)) for fb, ab in self.limit_bounds])
+
+
+def test_length_s(t):
+    """The test's length for the time limit, the runner's `test_length_s`: a stepped sine counts two steps more than
+    its octaves hold and a second over each step's dwell, for the settle windows."""
+    if t['type'] == 'sweep':
+        return 60.0 * np.log2(t['band_hz'][1] / t['band_hz'][0]) / t['rate_oct_per_min']
+    if t['type'] == 'stepped':
+        return (np.log2(t['band_hz'][1] / t['band_hz'][0]) * t['steps_per_octave'] + 2.0) * (t['step_s'] + 1.0)
+    return t['dwell_s']
 
 
 def step_grid(t):
