@@ -6,7 +6,8 @@
 #   sh sine/agree/start_agent.sh <label> <jobs.json> <problems folder> [workers]
 #   launchctl bootout gui/$(id -u)/<label>        stops it and every process it started
 #
-# The plist and the agent's output go beside the jobs file. Nothing here reads the synced project folder.
+# The plist and the agent's output go beside the jobs file. Nothing here reads the synced project folder. The numerical
+# libraries are held to one thread (one run, one core): unset, NumPy's took about 1.3 cores a Python run.
 set -u
 [ $# -ge 3 ] || { echo "usage: sh start_agent.sh <label> <jobs.json> <problems> [workers]"; exit 2; }
 LABEL="$1"; JOBS="$2"; PROBLEMS="$3"; WORKERS="${4:-8}"
@@ -28,6 +29,9 @@ cat > "$PL" <<EOF
 <key>EnvironmentVariables</key><dict>
   <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
   <key>PYTHONDONTWRITEBYTECODE</key><string>1</string>
+  <key>VECLIB_MAXIMUM_THREADS</key><string>1</string>
+  <key>OMP_NUM_THREADS</key><string>1</string>
+  <key>OPENBLAS_NUM_THREADS</key><string>1</string>
 </dict>
 <key>ProcessType</key><string>Interactive</string>
 <key>RunAtLoad</key><true/>
