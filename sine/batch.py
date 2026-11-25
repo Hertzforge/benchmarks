@@ -1,7 +1,12 @@
 """Run the MIMO Sine matrix: every job (problem, test, law) through the runner, then the scorer.
 
     python sine/batch.py --problems <problems folder> --out <runs folder> --name <batch> --runner <msnb_run> \
-        [--workers 6] [--only frame-6x6_s00,...] [--tests T1,T4] [--laws matrix] [--min-free-gb 50] [--job-timeout 7200]
+        [--workers 6] [--only frame-6x6_s00,...] [--tests T1,T4] [--laws matrix] [--min-free-gb 50] [--job-timeout 7200] \
+        [--cases <case folder>] [--jobs <jobs.json>]
+
+--cases: run <cases>/<problem>/<test>__<law>.json in place of each problem's own cases/<test>__<law>.json (a set's
+settings: the runs of record, the default check, a repeat; sine/record_jobs.py writes them). The runner still reads
+every other file from --problems. --jobs: the job list (a list of {problem, test, law}) in place of plan.py's matrix.
 
 The jobs are sine/plan.py's (the laws' manifests against the tests each problem built). A job's run folder is
 <out>/<batch>/<problem>/<test>__<law>/: the runner writes run.json (and timing.json) there with
@@ -96,7 +101,10 @@ class Batch:
         if stopped:
             self.count('skipped'); self.log(f'skipped {cid}: {stopped}')
             return
-        case = os.path.join(a.problems, j['problem'], 'cases', f"{j['test']}__{j['law']}.json")
+        case = case_path(a, j)
+        if not os.path.exists(case):
+            self.count('failed'); self.log(f'failed {cid}: no case file in the set')
+            return
         if os.path.isdir(rd):
             shutil.rmtree(rd)                         # a run folder without a card is a run that did not finish
         os.makedirs(os.path.dirname(rd), exist_ok=True)
@@ -109,7 +117,8 @@ class Batch:
             code, err = None, f'timed out after {a.job_timeout:g} s'
         t_run = time.time() - t0
         info = dict(schema='hertzforge-benchmark-sine-batch-job/0.1-draft', batch=a.name, case_id=cid,
-                    case_file=f"{j['problem']}/cases/{j['test']}__{j['law']}.json", case_sha256=sha256(case),
+                    case_file=(f"{os.path.basename(a.cases)}/{j['problem']}/{j['test']}__{j['law']}.json" if a.cases
+                               else f"{j['problem']}/cases/{j['test']}__{j['law']}.json"), case_sha256=sha256(case),
                     code_sha256=self.code, runner_sha256=self.runner_sha, runner_exit=code, run_s=round(t_run, 3),
                     started=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(t0)))
         if code not in (0, 1, 3) or not os.path.exists(os.path.join(rd, 'run.json')):
@@ -144,6 +153,13 @@ class Batch:
         return line
 
 
+def case_path(a, j):
+    root = a.cases if a.cases else None
+    if root:
+        return os.path.join(root, j['problem'], f"{j['test']}__{j['law']}.json")
+    return os.path.join(a.problems, j['problem'], 'cases', f"{j['test']}__{j['law']}.json")
+
+
 def select(jobs, a):
     only = set(a.only.split(',')) if a.only else None
     tests = set(a.tests.split(',')) if a.tests else None
@@ -164,11 +180,17 @@ def main(argv=None):
     ap.add_argument('--laws', default=None)
     ap.add_argument('--min-free-gb', type=float, default=50.0)
     ap.add_argument('--job-timeout', type=float, default=7200.0)
+    ap.add_argument('--cases', default=None)
+    ap.add_argument('--jobs', default=None)
     a = ap.parse_args(argv)
     a.workers = max(1, min(a.workers, MAX_WORKERS))
     a.problems, a.out, a.runner = (os.path.abspath(x) for x in (a.problems, a.out, a.runner))
+    if a.cases:
+        a.cases = os.path.abspath(a.cases)
     only = a.only.split(',') if a.only else None
-    if only:
+    if a.jobs:
+        jobs = [dict(problem=j['problem'], test=j['test'], law=j['law']) for j in json.load(open(a.jobs))]
+    elif only:
         jobs = [j for p in only for j in plan.jobs_for(p, a.problems)[0]]
     else:
         jobs = plan.jobs(a.problems)[0]

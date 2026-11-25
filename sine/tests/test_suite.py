@@ -395,6 +395,28 @@ class TestBatch(unittest.TestCase):
         log = open(os.path.join(out, 'b1', 'batch.log')).read().splitlines()
         self.assertTrue(log[-1].endswith('BATCH END b1: 2 done, 0 failed, 3 skipped'), log[-1])
 
+    def test_case_set_and_job_list(self):
+        out = tempfile.mkdtemp(dir=TMP)
+        cases = os.path.join(out, 'record')
+        os.makedirs(os.path.join(cases, LIN))
+        c = json.load(open(os.path.join(TMP, 'problems', LIN, 'cases', 'T1__matrix.json')))
+        c['protective'] = 'widened'
+        json.dump(c, open(os.path.join(cases, LIN, 'T1__matrix.json'), 'w'))
+        jobs = os.path.join(out, 'jobs.json')
+        json.dump([dict(problem=LIN, test='T1', law='matrix'), dict(problem=LIN, test='T4', law='matrix')], open(jobs, 'w'))
+        argv = ['--problems', os.path.join(TMP, 'problems'), '--out', out, '--name', 'b3', '--runner',
+                os.path.join(HERE, 'fake_runner.py'), '--workers', '2', '--cases', cases, '--jobs', jobs]
+        with contextlib.redirect_stdout(io.StringIO()):
+            batch.main(argv)
+        log = open(os.path.join(out, 'b3', 'batch.log')).read().splitlines()
+        # two jobs listed: T1 from the set, T4 has no case file in the set and fails (never the problem's own case)
+        self.assertTrue(log[-1].endswith('BATCH END b3: 1 done, 1 failed, 0 skipped'), log[-1])
+        self.assertTrue(any('failed frame-6x6_s00__T4__matrix: no case file in the set' in x for x in log))
+        info = json.load(open(os.path.join(out, 'b3', LIN, 'T1__matrix', 'batch.json')))
+        self.assertEqual(info['case_sha256'], batch.sha256(os.path.join(cases, LIN, 'T1__matrix.json')))
+        self.assertNotEqual(info['case_sha256'], batch.sha256(os.path.join(TMP, 'problems', LIN, 'cases', 'T1__matrix.json')))
+        self.assertEqual(info['case_file'], f'record/{LIN}/T1__matrix.json')
+
     def test_free_disk_stop(self):
         out, log = self.run_batch('b2', min_free_gb=1e12)
         self.assertTrue(any('BATCH STOP b2: free disk' in x for x in log))
