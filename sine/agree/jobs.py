@@ -19,7 +19,9 @@ and every other case but the 1 octave a minute sweeps, T1 and T5, to save their 
 agreement: the systems within the engine's limits (frame-6x6, frame-12x6, frame-12x3), linear and realistic, the
   first two structures of each (s00, s01); every test T1 to T5 each law's manifest accepts (sine/plan.py). Four arms,
   each a job list in <base>: hf_ideal (msnb_run --ideal-frf), hf_own (msnb_run), py_exact (the harness, its exact
-  small-signal response), py_given (the harness handed hf_own's law_identification.f8, --ident).
+  small-signal response), py_given (the harness handed hf_own's law_identification.f8, --ident), py_mguard (the
+  harness's law on its exact response, its guards on hf_own's measured file, --guard-ident: what the runner does with
+  --ideal-frf, so the pair hf_ideal / py_mguard compares the loops on the same law model and the same guards).
 pilot: the Hertzforge version on the systems within the limits, every tier, s00: matrix on every test the problem
   built (T1 to T5, L1), the other laws on T3 and T4; and two block D structures (frame-6x6 and frame-12x6,
   realistic, softening only) on matrix T1. One list, hf_own.
@@ -114,6 +116,8 @@ def main(argv=None):
             job('py_exact', [a.python, harness, case])
             job('py_given', [a.python, harness, case, '--ident', os.path.join(base, 'hf_own', key)])
             arms['py_given'][-1]['wait_for'] = os.path.join(base, 'hf_own', key, 'drive.json')
+            job('py_mguard', [a.python, harness, case, '--guard-ident', os.path.join(base, 'hf_own', key)])
+            arms['py_mguard'][-1]['wait_for'] = os.path.join(base, 'hf_own', key, 'drive.json')
             if ch or j['test'] not in ('T1', 'T5'):     # the 1 octave a minute sweeps only where the gain changes the case
                 job('py_gain', [a.python, harness, gained])
         else:
