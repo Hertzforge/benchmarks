@@ -195,11 +195,25 @@ relative to the problems folder, the runner's `--root`.
 | `full_level_scale` | 1 (the reference file is at full level) |
 | `ladder` | `levels_db` [-12, -9, -6, -3, 0], `rung` `{"seconds": 2}` |
 | `noise` | `rms_m_s2` (1e-3 of the specification), `seed` |
+| `drives` | `gain` and `ceiling_vpk`: the drive rule below |
 | `limits` | L1 only: the gauge's output name and the flat bound on [20, 2000] Hz |
 | `protective` | `default` (what a user's run gets) |
 
-Left to the runner's defaults: `tick_s` (0.01 s), `drives` (ceiling 9 V, abort 10 V),
+Left to the runner's defaults: `tick_s` (0.01 s), `drives.abort_vpk` (10 V),
 `identification_seed`, `max_test_s`. The engine's own identification is used (no `--ideal-frf`).
+
+**The drive rule (owner, 2026-11-25).** Every case carries an amplifier gain, `drives.gain`: the
+structure's input in volts per engine volt, the problem's ideal full-level drive peak
+(`checks.engine.ideal_drive_peak_v` of `problem.json`, the largest over every reference line and
+drive), so that peak is 1 V in engine volts. The ceiling, `drives.ceiling_vpk`, is 6 dB over it
+(`sine_model.DRIVE_HEADROOM_DB`; 1.99526231 V), the margin the generation's finite-play check
+already proves. The engine's 10 V range is the converter's and is not raised: without the gain,
+the 24 problems whose ideal drive is 10 V or more (MSNB-B-E5) could not be given that margin. The
+gain is applied only where the drive is played (the runner's station edge, the harness's `play`);
+the law, its ceilings and every drive in a run file are in engine volts, and the identification a
+law is built on is per engine volt. A run file states the gain as `settings.drive_gain`. The
+engine's 9 V default ceiling is for the default-check set only. The runner takes `drives.gain`
+from its commit after `572ca47d`; at `572ca47d` it refuses the key (exit 2).
 
 ## 8. What the Scorer Reads From a Run
 
@@ -207,8 +221,10 @@ The run folder's `run.json` (`msnb-run/1`): `case_id`; `outcome` (`class`, `engi
 `guard`, `channel`, `frequency_hz`, `time_s`, `level_db`, `message`); `history` (`time_s`,
 `frequency_hz`, `level_db`, `judged`, `control_re/_im`, `reference_re/_im`, `drive_re/_im`,
 `limit_re/_im`, `limit_bound`, `bin_error_db_min/_max`); `true_modes` (`tracked`, `modes`,
-`frequency_hz`); `summary` (`largest_drive_vpk`, `over_ceiling_samples`). `read_run` in
-`sine_scorer.py` is the one place that reads them.
+`frequency_hz`); `summary` (`largest_drive_vpk`, `over_ceiling_samples`); `settings.drive_gain`
+(1 when absent). `read_run` in `sine_scorer.py` is the one place that reads them. The history's
+drives are engine volts; every reading through the model (held-out gauges, stress, effort) uses
+them times the gain, the structure's input. The `drive` reading gives both.
 
 The runner records the controls and limit channels only. The held-out gauges as tested are
 estimated: the run's drive at each point through the modal model, the modes the runner followed
@@ -337,6 +353,7 @@ What the harness restates from the shipped engine (`hertzforge-mimo-sine` `core.
 | Laws' loop delays | Tracker delay factor 0.625 (the engine's four sections); transport 0 (the identification holds the structure's delays; no pipeline) |
 | Aimed reference | The reference times the notch scale for every law (`law.rs` `aimed_reference`) |
 | Judging | Control error against the reference (notched, with limit channels); abort after `abort_ticks` updates in a row outside the abort band, not counted in a settle window; a limit channel over its abort band ends the run at once; `judged` = at the last level, not settling, the law's answer used |
+| Drive gain | The case's `drives.gain` multiplies the drive where the structure is played; the law, ceilings and run file in engine volts; the exact response handed to the law is per engine volt (times the gain) |
 | Caps and guards | Change caps per drive against the drive as played; divergence stop after `divergence_s` of binding caps; a drive over its ceiling scales the whole vector; drive abort; 3 law misses a law fault; the runner's time limit `1.5 x (test + rungs) + 60 s` |
 | Protective | `default` and `widened` as the runner's table |
 | Run file | History decimated as the runner's (1/48-octave bins from the band's low edge at each level, with the bins' counts and error extremes; every update for a step or a dwell); `true_modes` from the simulator's own envelopes at the end of each tick, for the modes in the identification's band; outcome classes and guard names as the runner's |
@@ -349,5 +366,6 @@ What it leaves out or does differently:
 | Lag | The identification includes the structure's delays; no service pipeline delay between the law's answer and the drive | The lag (including the service's block) is measured and taken out of the identification; the drive reaches the structure that many frames later |
 | Backstop notch | Simplified: each limit channel's ratio to the identification's prediction learned from settled readings (3-update smoothing); the drive scaled at once to put the most loaded channel at its bound; the judged reference scaled by the share the inverse drive allows | The engine's notch with its near-bound and hysteresis rules, release rate and a law's notched reference |
 | Units | m/s^2 throughout | The law sees g |
+| Identification from an engine run | `--ident <engine run folder>`: the run's `law_identification.f8` (per engine volt), turned back by `exp(-j w turn / fs)`, `turn` its `identification.ideal_vs_measured.delay_turn_samples`, because this loop has no lag; coherence and trusted flags as written | The engine's own |
 | Stop | The run ends at the stop; no ramp down (`drive_is_zero` null) | A 120 dB/s ramp to zero |
 | Not modelled | Law requests (never honoured, as the runner's default), the rotation cap (none, as the default), the law's compute budget, kinematic ratings, events (`events` empty), `rung` in sweeps (refused) | |

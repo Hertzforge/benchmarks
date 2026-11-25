@@ -397,6 +397,14 @@ def case_test(obj, t):
     return dict(type='dwell', freq_hz=obj['dwell_hz'], dwell_s=g9(obj['seconds'] + ladder_seconds()))
 
 
+def drives_of(meta):
+    """The case's drives (owner, 2026-11-25): an amplifier gain, structure input (V) per engine volt, chosen so the
+    problem's ideal full-level drive peak (checks.engine.ideal_drive_peak_v, over every reference line and drive) is
+    1 V in engine volts; the ceiling DRIVE_HEADROOM_DB over it (1.995 V); the abort left at the runner's 10 V. The
+    engine's 10 V range is the converter's and is not raised; the gain is the amplifier a real system has."""
+    return dict(gain=g9(meta['checks']['engine']['ideal_drive_peak_v']), ceiling_vpk=g9(10 ** (sm.DRIVE_HEADROOM_DB / 20.0)))
+
+
 def write_cases(folder, sid, meta, tests):
     """The runner's case files (msnb-case/1, FORMAT_RUN.md of the runner draft), one per law and test the law's
     manifest accepts and the problem built. Every path is relative to the problems folder (the runner's --root)."""
@@ -416,7 +424,7 @@ def write_cases(folder, sid, meta, tests):
                         full_level_scale=1.0,
                         ladder=dict(levels_db=list(sm.LADDER['table_db']), rung=dict(sm.LADDER['per_rung'])),
                         noise=dict(rms_m_s2=g9(sm.NOISE_REL * spec), seed=noise_seed(sid, t)),
-                        limits=[], protective='default')
+                        drives=drives_of(meta), limits=[], protective='default')
             if t == 'L1':
                 L = obj['limit']
                 case['limits'] = [dict(output=L['name'], bound=dict(frequency_hz=list(obj['band_hz']),

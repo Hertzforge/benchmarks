@@ -118,6 +118,20 @@ class TestGeneration(unittest.TestCase):
         lin = json.load(open(os.path.join(P(LIN), 'problem.json')))
         self.assertEqual(lin['full_level']['spec_amplitude_mps2_pk'], meta['full_level']['spec_amplitude_mps2_pk'])
 
+    def test_cases_carry_the_drive_gain_and_ceiling(self):
+        # every case: gain = the problem's ideal full-level drive peak, so that peak is 1 V in engine volts; ceiling
+        # 6 dB over it. A case without the gain (the runner's default, 1) would put the ideal drive at its own peak
+        for sid in (SID, LIN):
+            meta = json.load(open(os.path.join(P(sid), 'problem.json')))
+            dg = np.fromfile(os.path.join(P(sid), meta['files']['ideal_drive']['file']), dtype='<c16')
+            for f in os.listdir(os.path.join(P(sid), 'cases')):
+                d = json.load(open(os.path.join(P(sid), 'cases', f)))['drives']
+                self.assertAlmostEqual(np.abs(dg).max() / d['gain'], 1.0, places=7, msg=f)
+                self.assertAlmostEqual(20 * np.log10(d['ceiling_vpk']), sm.DRIVE_HEADROOM_DB, places=6, msg=f)
+        bad = json.load(open(os.path.join(P(), 'cases', 'T1__matrix.json')))
+        bad['drives']['gain'] = 0.0
+        self.assertNotEqual(case_schema.check(bad), [])
+
     def test_cases_meet_the_runner_schema(self):
         for sid in (SID, LIN):
             for f in os.listdir(os.path.join(P(sid), 'cases')):
@@ -248,6 +262,27 @@ class TestScorer(unittest.TestCase):
         self.assertAlmostEqual(c['practice']['line_2_pattern']['held_out']['summed_rms_db'], 20 * np.log10(2), places=6)
         self.assertAlmostEqual(c['stress']['error_db_p10_p50_p90'][1], 20 * np.log10(2), places=6)
         self.assertAlmostEqual(c['drive']['effort_db_p50'], 20 * np.log10(2), places=6)
+
+    def test_the_drive_gain_turns_engine_volts_into_the_structures_input(self):
+        # a run file in engine volts with its gain reads as the same drive given in the structure's volts; read without
+        # the gain (the file's settings removed) the held-out gauges, the stress and the effort fall by the gain
+        same = self.score('T4', drive_scale=2.0, drive_gain=5.0)
+        ref = self.score('T4', drive_scale=2.0)
+        for path in (('practice', 'line_2_pattern', 'held_out', 'summed_rms_db'), ('drive', 'effort_db_p50'),
+                     ('stress', 'error_db_p10_p50_p90', 1)):
+            a, b = same, ref
+            for k in path:
+                a, b = a[k], b[k]
+            self.assertAlmostEqual(a, b, places=6, msg=path)
+        self.assertAlmostEqual(same['drive']['largest_drive_v'] * 5.0, ref['drive']['largest_drive_v'], places=6)
+        d = tempfile.mkdtemp(dir=TMP)
+        synth.make_run(P(), 'T4', d, drive_scale=2.0, drive_gain=5.0)
+        r = json.load(open(os.path.join(d, 'run.json')))
+        del r['settings']
+        json.dump(r, open(os.path.join(d, 'run.json'), 'w'))
+        with np.errstate(all='ignore'):
+            wrong = sc.score(P(), d)
+        self.assertAlmostEqual(ref['drive']['effort_db_p50'] - wrong['drive']['effort_db_p50'], 20 * np.log10(5.0), places=6)
 
     def test_completion_reads_an_early_end(self):
         c = self.score('T1', stop_fraction=0.5, outcome_class='stopped_by_protective_default')
@@ -423,10 +458,57 @@ class TestHarness(unittest.TestCase):
         D = np.array(h['drive_re'][-2]) + 1j * np.array(h['drive_im'][-2])
         with np.errstate(all='ignore'):
             H = rm.discrete_frf(st, [h['frequency_hz'][-1]], sm.FS, rows=rows)[0]
-        good = np.linalg.norm(C - H @ D) / np.linalg.norm(C)
-        bad = np.linalg.norm(C - H.conj() @ D) / np.linalg.norm(C)
+        # the drive in the file is engine volts; the structure was played it times the case's gain
+        g = r['settings']['drive_gain']
+        case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))
+        self.assertEqual(g, case['drives']['gain'])
+        self.assertGreater(abs(np.log10(g)), 0.05)              # the check below can see the gain
+        good = np.linalg.norm(C - g * H @ D) / np.linalg.norm(C)
+        bad = np.linalg.norm(C - g * H.conj() @ D) / np.linalg.norm(C)
+        no_gain = np.linalg.norm(C - H @ D) / np.linalg.norm(C)
         self.assertLess(good, 0.02)
         self.assertGreater(bad, 0.1)
+        self.assertGreater(no_gain, 0.1)
+        # the ideal full-level drive peak is 1 V in engine volts, so the judged drive sits near it, under the ceiling
+        self.assertLess(np.abs(D).max(), case['drives']['ceiling_vpk'])
+
+    def test_an_engine_identification_file_reads_back_in_the_harness_convention(self):
+        # an engine-style run folder (FORMAT_RUN.md: law_identification.f8, the response per engine volt turned by
+        # exp(j w turn / fs)) written from the harness's own exact response: read back it must equal that response;
+        # the file read with the turn's sign wrong must not
+        from pyloop import harness as hz
+        case = hz.Case(os.path.join(P(LIN), 'cases', 'T4__matrix.json'), os.path.join(TMP, 'problems'))
+        idn = hz.identify(case)
+        turn = 37.0
+        g, H, T = idn.grid_hz, idn.H0, idn.T0
+        rot = np.exp(1j * 2 * np.pi * g * turn / case.fs)[:, None, None]
+        Hf = (H * rot).reshape(g.size, -1)
+        n, m = H.shape[1], H.shape[2]
+        cols = [g[:, None], Hf.real, Hf.imag, np.zeros((g.size, 0)), np.zeros((g.size, 0)), idn.coh, np.zeros((g.size, 0)),
+                np.ones((g.size, 1))]
+        d = tempfile.mkdtemp(dir=TMP)
+        a = np.ascontiguousarray(np.concatenate(cols, 1), dtype='<f8')
+        a.tofile(os.path.join(d, 'law_identification.f8'))
+        sha = hashlib.sha256(open(os.path.join(d, 'law_identification.f8'), 'rb').read()).hexdigest()
+
+        def write(t):
+            run = dict(structure=dict(sha256=case.raw['structure']['sha256'], fs_hz=case.fs),
+                       identification=dict(source='engine', ideal_vs_measured=dict(delay_turn_samples=t),
+                                           law_given=dict(file='law_identification.f8', sha256=sha, lines=int(g.size),
+                                                          controls=case.raw['controls'], limits=[], drives=case.drive_names)))
+            json.dump(run, open(os.path.join(d, 'run.json'), 'w'))
+            return hz.identification_from_run(case, d)
+        got = write(turn)
+        self.assertLess(np.abs(got.H0 - H).max() / np.abs(H).max(), 1e-12)
+        self.assertTrue(np.all(got.trust))
+        wrong = write(-turn)
+        self.assertGreater(np.abs(wrong.H0 - H).max() / np.abs(H).max(), 0.1)
+        # a file of another structure is refused
+        run = json.load(open(os.path.join(d, 'run.json')))
+        run['structure']['sha256'] = '0' * 64
+        json.dump(run, open(os.path.join(d, 'run.json'), 'w'))
+        with self.assertRaises(hz.Refused):
+            hz.identification_from_run(case, d)
 
     def test_refuses_a_case_whose_structure_changed(self):
         case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))

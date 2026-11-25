@@ -1,5 +1,5 @@
 """Check a case file against the runner's case schema (msnb-case-1.schema.json, copied from the runner's draft at its
-commit 1c0a4a24, beside FORMAT_RUN.md). A small validator for the parts of JSON Schema that file uses (type, const,
+commit 1c0a4a24, beside FORMAT_RUN.md; `drives.gain` added 2026-11-25, FORMAT_SINE.md section 7). A small validator for the parts of JSON Schema that file uses (type, const,
 enum, required, properties, additionalProperties, items, minItems, maxItems, minimum, maximum, exclusiveMinimum,
 minLength, pattern, not, oneOf, $ref), so the suite needs no package beyond NumPy.
 

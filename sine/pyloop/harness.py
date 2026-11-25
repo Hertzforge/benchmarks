@@ -162,6 +162,9 @@ class Case:
         drv = c.get('drives') or {}
         self.ceiling = float(drv.get('ceiling_vpk', 9.0))
         self.abort_vpk = float(drv.get('abort_vpk', 10.0))
+        # the amplifier (owner, 2026-11-25): structure input per engine volt, applied where the drive is played; the
+        # law, the ceilings and the run file's drives are in engine volts
+        self.gain = float(drv.get('gain', 1.0))
         noise = c.get('noise') or {}
         self.noise_rms = float(noise.get('rms_m_s2', 0.0))
         self.noise_seed = int(noise.get('seed', 1))
@@ -219,14 +222,61 @@ def identify(case):
     g = np.arange(np.ceil(lo / IDENT_LINE_HZ), np.floor(hi / IDENT_LINE_HZ) + 1) * IDENT_LINE_HZ
     g = g[(g > 0) & (g < 0.5 * case.fs)]
     with np.errstate(all='ignore'):
-        H = rm.discrete_frf(case.st, g, case.fs, rows=case.controls)
-        T = rm.discrete_frf(case.st, g, case.fs, rows=case.limits) if case.limits else np.zeros((g.size, 0, case.st.n_drives), complex)
+        # per engine volt: the structure's response times the amplifier's gain
+        H = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=case.controls)
+        T = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=case.limits) if case.limits else np.zeros((g.size, 0, case.st.n_drives), complex)
     # C order: the laws' grid smoothing (carried.smooth_grid) reshapes in place and needs it
     H, T = np.ascontiguousarray(H), np.ascontiguousarray(T)
     if not (np.all(np.isfinite(H)) and np.all(np.isfinite(T))):
         raise Refused('the small-signal response is not finite on the identification\'s lines')
     return Identification(g, H, T, np.ones((g.size, H.shape[1])), np.ones((g.size, T.shape[1])), np.ones(g.size, bool),
                           dict(what='exact small-signal response (reference_model.discrete_frf)'))
+
+
+def identification_from_run(case, run_dir):
+    """The identification an engine run built its law on (the runner's `law_identification.f8`, FORMAT_RUN.md), for
+    this harness. The file is in the engine's convention: the identification's lag is taken out of the tracked
+    values, so a structure's response is turned by exp(j w turn / fs), `turn` the run's
+    `identification.ideal_vs_measured.delay_turn_samples` (lag less the frames ahead less the service's simulator
+    block). This loop has no lag, so the file is turned back by exp(-j w turn / fs). Coherence and the trusted flags
+    are taken as written."""
+    run = json.load(open(os.path.join(run_dir, 'run.json')))
+    ig = run['identification']
+    lg = ig['law_given']
+    n, p, m = len(case.controls), len(case.limits), case.st.n_drives
+    if (lg['controls'], lg['limits'], lg['drives']) != (case.raw['controls'], case.limit_names, case.drive_names):
+        raise Refused('the identification file is not for these controls, limit channels and drives')
+    if run['structure']['sha256'] != case.raw['structure']['sha256']:
+        raise Refused('the identification file is not of this structure')
+    if float(run['structure']['fs_hz']) != case.fs:
+        raise Refused('the identification file was made at another sample rate')
+    turn = (ig.get('ideal_vs_measured') or {}).get('delay_turn_samples')
+    if turn is None:
+        raise Refused('the run does not record the identification\'s delay turn')
+    path = os.path.join(run_dir, lg['file'])
+    if sha256(path) != lg['sha256']:
+        raise Refused('the identification file does not match its SHA-256 in the run file')
+    cols = 1 + 2 * n * m + 2 * p * m + n + p + 1
+    a = np.fromfile(path, dtype='<f8')
+    if a.size != cols * int(lg['lines']):
+        raise Refused('the identification file is not the size its run file states')
+    a = a.reshape(int(lg['lines']), cols)
+    g = a[:, 0].copy()
+    o = 1
+    H = (a[:, o:o + n * m] + 1j * a[:, o + n * m:o + 2 * n * m]).reshape(g.size, n, m)
+    o += 2 * n * m
+    T = (a[:, o:o + p * m] + 1j * a[:, o + p * m:o + 2 * p * m]).reshape(g.size, p, m)
+    o += 2 * p * m
+    coh = a[:, o:o + n].copy()
+    o += n
+    coh_l = a[:, o:o + p].copy()
+    o += p
+    trusted = a[:, o] > 0.5
+    back = np.exp(-1j * TWO_PI * g * float(turn) / case.fs)[:, None, None]
+    H, T = np.ascontiguousarray(H * back), np.ascontiguousarray(T * back)
+    return Identification(g, H, T, coh, coh_l, trusted,
+                          dict(what='the engine run\'s law_identification.f8, turned back by its delay turn',
+                               source=ig.get('source'), file_sha256=lg['sha256'], delay_turn_samples=float(turn)))
 
 
 def make_setup(case, idn):
@@ -353,8 +403,8 @@ class Station:
         phi = self.phi + TWO_PI * f * np.arange(1, N + 1) / fs
         self.phi = float(np.mod(phi[-1], TWO_PI))
         c, s = np.cos(phi), np.sin(phi)
-        d = Dn.real * c[:, None] - Dn.imag * s[:, None]
-        r = rm.simulate_level(self.case.st, d, fs, rows=self.rows, state=self.state)
+        d = Dn.real * c[:, None] - Dn.imag * s[:, None]                # engine volts
+        r = rm.simulate_level(self.case.st, d * self.case.gain, fs, rows=self.rows, state=self.state)
         self.state = r.state
         self.env = r.envelope if self.case.st.rules is not None else self.env
         y = r.outputs
@@ -687,7 +737,8 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
     judged = sum(r['judged'] for r in rec)
     run = dict(schema=RUN_SCHEMA, case_id=case.raw['case_id'], case_sha256=case.sha256, runner_sha256=runner_sha,
                code_commit=None, runner='the MIMO Sine suite\'s Python harness (sine/pyloop/harness.py)',
-               options=dict(ideal_frf=True, record=False, harness='python'),
+               options=dict(ideal_frf=info['ident'].level.get('source') in (None, 'ideal_frf'), record=False,
+                            harness='python'),
                structure=dict(file=case.raw['structure']['file'], sha256=case.raw['structure']['sha256'],
                               controls=case.raw['controls'], limits=case.limit_names, drives=case.drive_names,
                               n_modes=int(st.n_modes), fs_hz=case.fs, tick_s=case.dt, tick_frames=case.tick_n),
@@ -695,10 +746,14 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
                         phase_specified=case.phase_specified),
                settings=dict(protective=case.protective_name, **case.protective, max_step_db=MAX_STEP_DB,
                              max_rise_db_per_s=MAX_RISE_DB_PER_S, rotation_cap_deg=None, law_misses=LAW_MISSES,
-                             ceiling_vpk=case.ceiling, abort_vpk=case.abort_vpk, ladder_db=case.levels,
+                             ceiling_vpk=case.ceiling, abort_vpk=case.abort_vpk, drive_gain=case.gain, ladder_db=case.levels,
                              rung=dict(seconds=case.rung_s), noise_rms_m_s2=case.noise_rms, noise_seed=case.noise_seed,
                              max_test_s=case.max_test_s),
-               identification=dict(source='exact_small_signal', grid_hz=[float(info['ident'].grid_hz[0]), float(info['ident'].grid_hz[-1])],
+               identification=dict(source='exact_small_signal' if info['ident'].level.get('source') is None else 'engine_file',
+                                   engine_source=info['ident'].level.get('source'),
+                                   file_sha256=info['ident'].level.get('file_sha256'),
+                                   delay_turn_samples=info['ident'].level.get('delay_turn_samples'),
+                                   grid_hz=[float(info['ident'].grid_hz[0]), float(info['ident'].grid_hz[-1])],
                                    lines=int(info['ident'].grid_hz.size), line_hz=IDENT_LINE_HZ),
                outcome={'class': end['cls'], 'engine_outcome': end['engine'], 'guard': end['guard'], 'channel': end['channel'],
                         'frequency_hz': end['f'], 'time_s': end['t'], 'level_db': end['level'], 'message': end['message']},
@@ -719,13 +774,16 @@ def main(argv=None):
     ap.add_argument('case')
     ap.add_argument('--root', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--ident', default=None, help='an engine run folder (msnb_run): build the law on its '
+                    'law_identification.f8 in place of the exact small-signal response')
     a = ap.parse_args(argv)
     try:
         case = Case(os.path.abspath(a.case), os.path.abspath(a.root))
+        idn = identification_from_run(case, os.path.abspath(a.ident)) if a.ident else None
     except Refused as ex:
         print(f'REFUSED: {ex}', file=sys.stderr)
         return 2
-    rec, end, info = run_case(case)
+    rec, end, info = run_case(case, idn)
     write_run(case, rec, end, info, a.out, a.case, sha256(os.path.abspath(__file__)))
     print(f"{case.raw['case_id']}: {end['cls']} ({end['engine']}), {len(rec)} updates, {info['wall_s']:.1f} s")
     return 0 if end['cls'] == 'completed' else 1

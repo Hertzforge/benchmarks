@@ -19,7 +19,7 @@ def _ri(z):
 
 def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0, rate_factor=1.0, stop_fraction=None,
              dwell_offset=0.0, mode_shift=0.0, bin_bump_db=None, limit_over_db=None, outcome_class='completed',
-             all_unjudged=False, tick=0.01, ladder_in_test=False):
+             all_unjudged=False, tick=0.01, ladder_in_test=False, drive_gain=None):
     """Write `out`/run.json. gain_db: None or a function f -> dB (scalar or per control) applied to every control.
     bin_bump_db: (f_hz, dB): one sweep bin whose largest error is that much, its point untouched."""
     pr = sc.Problem(problem)
@@ -80,7 +80,8 @@ def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0
              miss=[None] * f_all.size)
     h['control_re'], h['control_im'] = _ri(C)
     h['reference_re'], h['reference_im'] = _ri(R)
-    h['drive_re'], h['drive_im'] = _ri(D)
+    # drive_gain: the run file holds engine volts, the structure's input over the gain, and says the gain
+    h['drive_re'], h['drive_im'] = _ri(D if drive_gain is None else D / drive_gain)
     h['error_db'] = [[float(x) for x in row] for row in g]
     if test['kind'] == 'sweep':
         h['bin_updates'] = [1] * f_all.size
@@ -115,6 +116,8 @@ def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0
                history=h, true_modes=tm,
                summary=dict(updates=int(f_all.size), records_dropped=0, judged_updates=int(judged.sum()),
                             largest_drive_vpk=float(np.abs(D).max()), over_ceiling_samples=0, drive_is_zero=True, engaged_at_s=0.0))
+    if drive_gain is not None:
+        run['settings'] = dict(drive_gain=float(drive_gain))
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, 'run.json'), 'w') as fh:
         json.dump(run, fh)

@@ -161,7 +161,12 @@ def read_run(path, st=None):
     r.settling = np.asarray(h['settling'], bool) if h.get('settling') is not None else np.zeros(r.t.size, bool)
     r.C = _cx(h, 'control')
     r.Rrun = _cx(h, 'reference')
-    r.D = _cx(h, 'drive')
+    # the run file's drives are engine volts; the amplifier's gain (settings.drive_gain, structure input per engine
+    # volt; 1 when the file gives none) turns them into the structure's input, which every reading through the model
+    # uses (held-out gauges, stress, effort)
+    r.gain = float((raw.get('settings') or {}).get('drive_gain') or 1.0)
+    r.D_engine = _cx(h, 'drive')
+    r.D = r.D_engine * r.gain
     r.L = _cx(h, 'limit')
     r.Lb = _num(h.get('limit_bound'))
     r.bin_min = _num(h.get('bin_error_db_min'))
@@ -486,18 +491,20 @@ def completion_reading(pr, run, mask, test):
 
 
 def drive_reading(pr, run, mask):
-    D = run.D
+    D = run.D_engine
     nrm = np.linalg.norm(D, axis=1)
     a = np.abs(D)
     k, j = np.unravel_index(int(np.argmax(a)), a.shape)
     summ = run.raw.get('summary') or {}
     out = dict(norm_max_v=float(nrm.max()), largest_drive_v=float(a[k, j]), largest_drive=int(j), largest_at_hz=float(run.f[k]),
                largest_drive_vpk_any_sample=summ.get('largest_drive_vpk'), over_ceiling_samples=summ.get('over_ceiling_samples'),
-               engine_ceiling_v=sm.ENGINE_MAX_DRIVE_VPK,
-               what='norm and largest drive over the history points; largest_drive_vpk_any_sample is the runner\'s summary')
+               engine_ceiling_v=sm.ENGINE_MAX_DRIVE_VPK, drive_gain=run.gain,
+               norm_max_structure_v=float(nrm.max() * run.gain), largest_drive_structure_v=float(a[k, j] * run.gain),
+               what='norm and largest drive over the history points in engine volts (what the converter played), and '
+                    'times the drive gain (the structure\'s input); largest_drive_vpk_any_sample is the runner\'s summary')
     if mask.any():
         di = pr.ideal_at(run.f[mask])[0]
-        eff = db20(nrm[mask], np.linalg.norm(di, axis=1))
+        eff = db20(np.linalg.norm(run.D[mask], axis=1), np.linalg.norm(di, axis=1))
         out.update(effort_db_p50=float(np.median(eff)), effort_db_p95=float(np.percentile(eff, 95)), effort_db_max=float(eff.max()),
                    effort_what='20 log10 of the drive norm over the ideal drive\'s norm, judged updates')
     return out

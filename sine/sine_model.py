@@ -36,6 +36,7 @@ REF_PER_OCTAVE = 384           # the reference grid: 1/384 octave (checked by th
 SIZE_PER_OCTAVE = 1536         # the sizing and peak-finding grid: 1/1536 octave
 LAM_REL = 1e-3                 # Tikhonov regularization of the least-squares drive, relative to the largest singular value
 G0 = 9.80665                   # m/s^2 per g (the engine's profiles are in g peak; the conversion is the runner's, at its edge)
+DRIVE_HEADROOM_DB = 6.0       # each case's drive ceiling over its ideal full-level drive peak (owner, 2026-11-25)
 ENGINE_MAX_DRIVE_VPK = 10.0    # the shipped MIMO Sine engine's ceiling on a drive (hertzforge-mimo-sine limits.rs, origin/main fa084b49)
 ENGINE_MAX_CONTROLS = 16       # and on the counts of controls and drives (the same file)
 ENGINE_MAX_DRIVES = 8
