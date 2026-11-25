@@ -61,5 +61,26 @@ class TestParity(unittest.TestCase):
         self.assertGreater(np.max(np.linalg.norm(a - b, axis=1) / np.linalg.norm(a, axis=1)), 1e-3)
 
 
+class TestPairedFirstDrive(unittest.TestCase):
+    """The crate's `paired` engage (be51b666): the pairs' own rule run on the identification to the drive it settles
+    to, not the plain start of each reference over its own path."""
+
+    def law(self, H):
+        from types import SimpleNamespace
+        from pyloop.paired_ref import PairedRef
+        ident = SimpleNamespace(H0_at=lambda f: H)
+        return PairedRef(SimpleNamespace(n=H.shape[0], m=H.shape[1], ident=ident))
+
+    def test_the_first_drive_meets_every_control_on_a_coupled_pair(self):
+        H = np.array([[1.0, 0.3 + 0.1j], [0.25 - 0.05j, 0.8]])
+        R = np.array([2.0, 1.5], complex)
+        from types import SimpleNamespace
+        D = self.law(H).engage(SimpleNamespace(f=50.0, R=R)).D
+        err = np.abs(20 * np.log10(np.abs(H @ D) / np.abs(R)))
+        self.assertLess(err.max(), 0.01)
+        plain = np.abs(R) / np.abs(np.diag(H))
+        self.assertGreater(np.abs(20 * np.log10(np.abs(H @ plain) / np.abs(R))).max(), 1.0, 'the check cannot fail')
+
+
 if __name__ == '__main__':
     unittest.main()
