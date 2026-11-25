@@ -1,0 +1,19 @@
+[package]
+name = "shock_followed"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The MIMO Shock suite's closed-loop library for the law math's followed and followed-hold (ctypes)."
+
+[lib]
+crate-type = ["cdylib"]
+
+# Its own workspace; the law math from Hertzforge at the main branch's merge commit.
+[workspace]
+
+[dependencies]
+hertzforge-mimo-shock-law-math = { git = "https://github.com/hertzforge/hertzforge", rev = "6d6e1758f68130dd52f645c75390d369926c7f2a" }
+serde_json = "1"
+
+[profile.release]
+debug = false

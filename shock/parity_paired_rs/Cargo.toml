@@ -1,0 +1,9 @@
+[package]
+name = "paired_replay"
+version = "0.0.0"
+edition = "2021"
+publish = false
+[workspace]
+[dependencies]
+hertzforge-mimo-shock-law-math = { git = "https://github.com/hertzforge/hertzforge", rev = "6d6e1758f68130dd52f645c75390d369926c7f2a" }
+serde_json = "1"
