@@ -47,11 +47,16 @@ class Identification:
         """The model's group delay at f, s: the largest over the elements of Hhat0 above a tenth of
         the line's largest element of |d arg H / d w|, smoothed over five lines. A stand-in for the
         structure's own response time (about 1 / (zeta w) at a lightly damped resonance). With
-        span_hz, the largest over f +- span_hz."""
+        span_hz, the largest over f +- span_hz. With `gd_turn` = (samples, fs) set, read in the engine's
+        convention: the response turned by exp(j w samples / fs), the identification's lag taken out (the harness's
+        pipeline, harness.py)."""
         if getattr(self, '_gd', None) is None:
             g = self.grid_hz
             H = self.H0.reshape(g.size, -1)
-            ph = np.unwrap(np.angle(H), axis=0)
+            tw = getattr(self, 'gd_turn', None)
+            if tw is not None:
+                H = H * np.exp(2j * np.pi * g * float(tw[0]) / float(tw[1]))[:, None]
+            ph =np.unwrap(np.angle(H), axis=0)
             d = np.abs(np.gradient(ph, 2 * np.pi * g, axis=0))
             big = np.abs(H) >= 0.1 * np.abs(H).max(1, keepdims=True)
             gd = np.where(big, d, 0.0).max(1)

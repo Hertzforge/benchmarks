@@ -27,6 +27,7 @@ tenth of the line's largest, five-line smoothing, the largest within +-2 B_n).
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -84,6 +85,58 @@ PROTECTIVE = {
     'default': dict(alarm_db=1.5, abort_db=3.0, abort_ticks=3, limit_alarm_db=1.5, limit_abort_db=3.0, divergence_s=1.0),
     'widened': dict(alarm_db=1.5, abort_db=20.0, abort_ticks=100, limit_alarm_db=1.5, limit_abort_db=20.0, divergence_s=60.0),
 }
+
+# The runner's pipeline (the harness's default; --no-pipeline leaves it out, as the harness was at d11f453). Read at
+# the Hertzforge repository's origin/main 5f5b5d8d, the same as the runner's 419b01a6 in these files:
+#  - the drive reaches the structure FRAMES_AHEAD + SIM_BLOCK_FRAMES samples after the engine writes it: the frames
+#    queued ahead of the first drive frame, 8 on a station that steps with the service (the engine's prefill 4 and
+#    queue 4: hertzforge-mimo-sine service.rs StationStart::frames_ahead, tests/real_time_start.rs "the prefill and
+#    the queue"; recorded as `frames_ahead` 8 on every runner run of the agreement sample), and one block of the
+#    simulator station (service.rs SIM_BLOCK_FRAMES = 256; the block's delay was found by fitting, MSNB-A-E2, and is
+#    fitted again on every runner run as `ideal_vs_measured.fitted_delay_samples`);
+#  - the lag the identification measures, `lag_frames`, is that pipeline plus the structure's own apparent delay (the
+#    turn): ident.rs measure_lag, the largest sum over response and drive pairs of |the circular cross-correlation| of
+#    the measured shot's first realization, second copy, lags 0 to n/2 (restated in `engine_lag`);
+#  - the engine demodulates every input against the oscillator's phase `lag_frames` samples back (core.rs, the phase
+#    ring), so its identification and readings carry the turn; this loop's response and readings do not (C = H D on
+#    the exact response), so it demodulates against the phase PIPELINE_FRAMES back, the delay its own identification
+#    has taken out, and the turn is the one convention difference, as identification_from_run already treats it;
+#  - the law is told the transport delay lag_frames / fs (service.rs make_law_setup, LawSetup transport_delay_s) and
+#    reads the identification's group delay with the lag taken out (law-math speed.rs `gain`: the group delay + the
+#    transport + the tracker's + the tick), so the law's and the guards' group delays here are read from the response
+#    turned by the turn (Identification.gd_turn);
+#  - the settle window adds lag_frames / fs (core.rs settle_s: 3 x the group delay + the lag).
+# Left out: the engine's phase ring starts at zero, so its first lag_frames samples of the engaged run demodulate
+# against phase 0 (inside the first settle window, never judged); the probe's and the shot's levels (the restated
+# lag is taken on the small-signal response, where the runner's shot moves a jointed structure's modes).
+FRAMES_AHEAD = 8
+SIM_BLOCK_FRAMES = 256
+PIPELINE_FRAMES = FRAMES_AHEAD + SIM_BLOCK_FRAMES
+IDENT_SEED = 0x5EED0003                     # the service's identification seed (msnb_run SERVICE_SYSID_SEED)
+IDENT_RESOLUTION_HZ = 0.25                  # setup.rs DEFAULT_IDENT_RESOLUTION_HZ, as the runner's record_len 32768
+IDENT_MAX_RECORD = 1 << 18                  # ident.rs MAX_RECORD_LEN
+_M64 = (1 << 64) - 1
+
+
+def splitmix_uniform(seed, count):
+    """The engine's identification generator (ident.rs Rng, splitmix64): `count` draws uniform on [0, 1)."""
+    s, out = int(seed) & _M64, np.empty(count)
+    for i in range(count):
+        s = (s + 0x9E3779B97F4A7C15) & _M64
+        z = s
+        z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _M64
+        z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _M64
+        z ^= z >> 31
+        out[i] = (z >> 11) / float(1 << 53)
+    return out
+
+
+def record_len_for(fs, resolution_hz=IDENT_RESOLUTION_HZ):
+    """ident.rs record_len_for: the shortest power of two from 1024 whose line spacing is at most resolution_hz."""
+    n = 1024
+    while fs / n > resolution_hz and n < IDENT_MAX_RECORD:
+        n *= 2
+    return n
 
 
 class Refused(Exception):
@@ -227,15 +280,8 @@ def identify(case):
     lo, hi = case.ident_band
     g = np.arange(np.ceil(lo / IDENT_LINE_HZ), np.floor(hi / IDENT_LINE_HZ) + 1) * IDENT_LINE_HZ
     g = g[(g > 0) & (g < 0.5 * case.fs)]
-    rows = case.controls + case.limits
     n = len(case.controls)
-    with np.errstate(all='ignore'):
-        # per engine volt: the structure's response times the amplifier's gain. The linear tier is stepped as the
-        # simulator steps it (its fitted filters, pyloop/fitted.py); a jointed structure through its own step
-        if is_fitted(case.st):
-            Hall = case.gain * FittedModal(case.st, rows, case.fs).frf(g)
-        else:
-            Hall = case.gain * rm.discrete_frf(case.st, g, case.fs, rows=rows)
+    Hall = small_signal_frf(case, g)
     H, T = Hall[:, :n], Hall[:, n:]
     # C order: the laws' grid smoothing (carried.smooth_grid) reshapes in place and needs it
     H, T = np.ascontiguousarray(H), np.ascontiguousarray(T)
@@ -244,6 +290,43 @@ def identify(case):
     return Identification(g, H, T, np.ones((g.size, H.shape[1])), np.ones((g.size, T.shape[1])), np.ones(g.size, bool),
                           dict(what='exact small-signal response of the stepped structure (pyloop/fitted.py for the '
                                     'linear tier, reference_model.discrete_frf otherwise)'))
+
+
+def small_signal_frf(case, g):
+    """(lines, controls + limits, drives) per engine volt: the structure's response times the amplifier's gain. The
+    linear tier is stepped as the simulator steps it (its fitted filters, pyloop/fitted.py); a jointed structure
+    through its own step."""
+    rows = case.controls + case.limits
+    with np.errstate(all='ignore'):
+        if is_fitted(case.st):
+            return case.gain * FittedModal(case.st, rows, case.fs).frf(g)
+        return case.gain * rm.discrete_frf(case.st, g, case.fs, rows=rows)
+
+
+def engine_lag(case, pipeline_frames=PIPELINE_FRAMES):
+    """The lag the engine's identification would measure on this structure (ident.rs measure_lag on the measured shot),
+    restated on the small-signal response: the shot's first realization (ident.rs excitation: a unit line of random
+    phase on every line of the band, drive by drive, from the service's seed; record_len_for, grid_band, band_lines),
+    in steady state through the structure and the station's pipeline, Y_i = sum_j H_ij X_j exp(-j w pipeline / fs);
+    the lag is the largest over 0 <= k < n/2 of sum_ij |irfft(Y_i conj(X_j))|. Every drive is taken at the same rms (the
+    case's one ceiling) and no realization's peak cap binding; no noise."""
+    fs = case.fs
+    n = record_len_for(fs)
+    k = np.arange(n // 2 + 1)
+    f = k * fs / n
+    lo, hi = case.ident_band[0], min(case.ident_band[1], 0.45 * fs)
+    on = np.flatnonzero((k > 0) & (k < n // 2) & (f >= lo) & (f <= hi))
+    m = case.st.n_drives
+    X = np.zeros((m, n // 2 + 1), complex)
+    X[:, on] = np.exp(2j * np.pi * splitmix_uniform(IDENT_SEED, m * on.size).reshape(m, on.size))
+    Hl = small_signal_frf(case, f[on])                          # (lines, rows, drives)
+    turn = np.exp(-2j * np.pi * f[on] * pipeline_frames / fs)
+    s = np.zeros(n)
+    for i in range(Hl.shape[1]):
+        Y = np.zeros(n // 2 + 1, complex)
+        Y[on] = (Hl[:, i, :] * X[:, on].T).sum(1) * turn
+        s += np.abs(np.fft.irfft(Y[None, :] * np.conj(X), n=n, axis=1)).sum(0)
+    return int(np.argmax(s[:n // 2]))
 
 
 def identification_from_run(case, run_dir):
@@ -296,10 +379,13 @@ def identification_from_run(case, run_dir):
     return Identification(g, H, T, coh, coh_l, trusted,
                           dict(what='the engine run\'s law_identification.f8, turned back by its delay turn',
                                source=ig.get('source'), file_sha256=lg['sha256'], delay_turn_samples=float(turn),
-                               lag_frames=float(ig['lag_frames']), as_written=as_written))
+                               lag_frames=float(ig['lag_frames']), frames_ahead=ig.get('frames_ahead'),
+                               as_written=as_written))
 
 
-def make_setup(case, idn):
+def make_setup(case, idn, lag_frames=None):
+    """`lag_frames` None: no pipeline, the law told no transport delay (the harness at d11f453); otherwise the law is
+    told lag_frames / fs, as the engine tells its law (service.rs make_law_setup)."""
     n, m, p = len(case.controls), case.st.n_drives, len(case.limits)
     g = idn.grid_hz
     ref = np.array([case.reference_at(f) for f in g])
@@ -311,7 +397,7 @@ def make_setup(case, idn):
     # the loop delays the engine gives its laws (LawSetup.loop_delay): its tracker's delay factor; no transport beyond
     # what the identification shows (here the identification holds the structure's delays and there is no pipeline)
     s.tracker_delay_factor = TRACKER_DELAY_FACTOR
-    s.transport_delay_s = 0.0
+    s.transport_delay_s = 0.0 if lag_frames is None else float(lag_frames) / case.fs
     return s
 
 
@@ -401,9 +487,15 @@ class Schedule:
 class Station:
     """The structure (simulate_level, continued tick to tick), the noise and the trackers."""
 
-    def __init__(self, case):
+    def __init__(self, case, pipeline_frames=0):
         self.case = case
         self.rows = case.controls + case.limits
+        # the station's pipeline: the drive samples written and not yet at the structure, and the oscillator's phase
+        # for each, so every reading is demodulated against the phase that produced it (zeros at the start: the
+        # frames ahead of the first drive frame)
+        self.P = int(pipeline_frames)
+        self.fifo = np.zeros((self.P, case.st.n_drives))
+        self.fifo_phi = np.zeros(self.P)
         self.state = None
         self.rng = np.random.default_rng(case.noise_seed)
         self.trk = np.zeros((TRACKER_POLES, 2, len(self.rows)))    # (pole, i/q, channel)
@@ -424,11 +516,18 @@ class Station:
         phi = self.phi + TWO_PI * f * np.arange(1, N + 1) / fs
         self.phi = float(np.mod(phi[-1], TWO_PI))
         c, s = np.cos(phi), np.sin(phi)
-        d = Dn.real * c[:, None] - Dn.imag * s[:, None]                # engine volts
+        d = Dn.real * c[:, None] - Dn.imag * s[:, None]                # engine volts, as the engine writes them
+        x = d
+        if self.P:                                                   # what reaches the structure this tick
+            d_all = np.concatenate([self.fifo, d])
+            ph_all = np.concatenate([self.fifo_phi, phi])
+            x, ph = d_all[:N], ph_all[:N]
+            self.fifo, self.fifo_phi = d_all[N:], ph_all[N:]
+            c, s = np.cos(ph), np.sin(ph)
         if self.fitted is not None:                                  # the linear tier, as the simulator steps it
-            y = self.fitted.step(d * self.case.gain)
+            y = self.fitted.step(x * self.case.gain)
         else:
-            r = rm.simulate_level(self.case.st, d * self.case.gain, fs, rows=self.rows, state=self.state)
+            r = rm.simulate_level(self.case.st, x * self.case.gain, fs, rows=self.rows, state=self.state)
             self.state = r.state
             self.env = r.envelope if self.case.st.rules is not None else self.env
             y = r.outputs
@@ -457,17 +556,48 @@ def _db(x):
     return 20.0 * np.log10(np.maximum(np.abs(x), 1e-300))
 
 
-def run_case(case, ident=None, guard_ident=None):
+def pipeline_for(case, idn, gid):
+    """The pipeline's numbers for a run: (pipeline samples, lag_frames, where the lag came from). The lag belongs to the
+    controller's identification, as in the engine: an engine run's file carries its own (its `frames_ahead` + the
+    simulator block is the pipeline, and its delay turn must be the lag less that); the exact response takes the lag
+    the engine would measure (`engine_lag`)."""
+    src = gid if gid.level.get('lag_frames') is not None else (idn if idn.level.get('lag_frames') is not None else None)
+    if src is None:
+        return PIPELINE_FRAMES, engine_lag(case), 'restated (engine_lag on the small-signal response)'
+    L = int(round(src.level['lag_frames']))
+    fa = src.level.get('frames_ahead')
+    P = PIPELINE_FRAMES if fa is None else int(fa) + SIM_BLOCK_FRAMES
+    if abs(float(src.level['delay_turn_samples']) - (L - P)) > 1e-9:
+        raise Refused(f"the engine file's delay turn {src.level['delay_turn_samples']} is not its lag {L} less the "
+                      f'pipeline {P}')
+    return P, L, 'the engine run\'s identification'
+
+
+def run_case(case, ident=None, guard_ident=None, pipeline=True):
     """`ident` is the law's identification (the exact response when None); `guard_ident` the controller's own, for the
     settle window, the first drive's bound and the notch's predictions (`ident` when None). The runner with
-    `--ideal-frf` hands only its law the ideal response and keeps its measured identification for the rest."""
+    `--ideal-frf` hands only its law the ideal response and keeps its measured identification for the rest.
+    `pipeline` False leaves the runner's pipeline out (the harness as at d11f453)."""
     t_wall = time.perf_counter()
     idn = identify(case) if ident is None else ident
     gid = idn if guard_ident is None else guard_ident
-    setup = make_setup(case, idn)
+    pipe = None
+    if pipeline:
+        P, L, lag_src = pipeline_for(case, idn, gid)
+        pipe = dict(pipeline_frames=P, lag_frames=L, lag_source=lag_src, turn_samples=L - P,
+                    transport_delay_s=L / case.fs)
+        same = gid is idn                       # the group delays read in the engine's convention, on copies
+        idn = copy.copy(idn)
+        idn.gd_turn, idn._gd = (L - P, case.fs), None
+        if same:
+            gid = idn
+        else:
+            gid = copy.copy(gid)
+            gid.gd_turn, gid._gd = (L - P, case.fs), None
+    setup = make_setup(case, idn, None if pipe is None else pipe['lag_frames'])
     law = case.law_cls(setup, **case.law_params)
     sched = Schedule(case)
-    sta = Station(case)
+    sta = Station(case, 0 if pipe is None else pipe['pipeline_frames'])
     pr = case.protective
     n, m, p = setup.n, setup.m, setup.p
     dt = case.dt
@@ -476,6 +606,10 @@ def run_case(case, ident=None, guard_ident=None):
     def settle_s(f):
         b = tracking_bw(f)
         aw = gid.level.get('as_written')
+        if pipe is not None:                    # core.rs settle_s, the group delay with the lag taken out
+            src = gid if aw is None else aw
+            return (SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * src.group_delay_at(f, 2.0 * b)
+                    + pipe['lag_frames'] / case.fs)
         if aw is None:
             return SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * gid.group_delay_at(f, 2.0 * b)
         return (SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * aw.group_delay_at(f, 2.0 * b)
@@ -701,7 +835,7 @@ def run_case(case, ident=None, guard_ident=None):
         f = f_next
         sta.set_bandwidth(f)
     return rec, end, dict(over_ceiling_samples=over_ceiling_samples, largest=largest, wall_s=time.perf_counter() - t_wall,
-                          ident=idn, guard_ident=None if guard_ident is None else gid)
+                          ident=idn, guard_ident=None if guard_ident is None else gid, pipeline=pipe)
 
 
 # ---------------------------------------------------------------------------------------------- the run file
@@ -770,7 +904,7 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
     run = dict(schema=RUN_SCHEMA, case_id=case.raw['case_id'], case_sha256=case.sha256, runner_sha256=runner_sha,
                code_commit=None, runner='the MIMO Sine suite\'s Python harness (sine/pyloop/harness.py)',
                options=dict(ideal_frf=info['ident'].level.get('source') in (None, 'ideal_frf'), record=False,
-                            harness='python'),
+                            harness='python', pipeline=info.get('pipeline') is not None),
                structure=dict(file=case.raw['structure']['file'], sha256=case.raw['structure']['sha256'],
                               controls=case.raw['controls'], limits=case.limit_names, drives=case.drive_names,
                               n_modes=int(st.n_modes), fs_hz=case.fs, tick_s=case.dt, tick_frames=case.tick_n),
@@ -792,7 +926,8 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
                                        delay_turn_samples=info['guard_ident'].level.get('delay_turn_samples'),
                                        lag_frames=info['guard_ident'].level.get('lag_frames')),
                                    grid_hz=[float(info['ident'].grid_hz[0]), float(info['ident'].grid_hz[-1])],
-                                   lines=int(info['ident'].grid_hz.size), line_hz=IDENT_LINE_HZ),
+                                   lines=int(info['ident'].grid_hz.size), line_hz=IDENT_LINE_HZ,
+                                   pipeline=info.get('pipeline')),
                outcome={'class': end['cls'], 'engine_outcome': end['engine'], 'guard': end['guard'], 'channel': end['channel'],
                         'frequency_hz': end['f'], 'time_s': end['t'], 'level_db': end['level'], 'message': end['message']},
                events=[], history=h, true_modes=tm,
@@ -818,6 +953,9 @@ def main(argv=None):
                     'identification (settle window, first drive\'s bound, notch) from its law_identification.f8, the '
                     'law keeping --ident or the exact response (the runner\'s run of the case without --ideal-frf holds '
                     'its measured file; with --ideal-frf the file is what the law was given)')
+    ap.add_argument('--no-pipeline', action='store_true', help='leave the runner\'s pipeline out (the harness as at '
+                    'd11f453): the drive reaches the structure at the next tick, demodulated against its own phase, the '
+                    'law told no transport delay')
     a = ap.parse_args(argv)
     try:
         case = Case(os.path.abspath(a.case), os.path.abspath(a.root))
@@ -826,7 +964,11 @@ def main(argv=None):
     except Refused as ex:
         print(f'REFUSED: {ex}', file=sys.stderr)
         return 2
-    rec, end, info = run_case(case, idn, gidn)
+    try:
+        rec, end, info = run_case(case, idn, gidn, pipeline=not a.no_pipeline)
+    except Refused as ex:
+        print(f'REFUSED: {ex}', file=sys.stderr)
+        return 2
     write_run(case, rec, end, info, a.out, a.case, sha256(os.path.abspath(__file__)))
     print(f"{case.raw['case_id']}: {end['cls']} ({end['engine']}), {len(rec)} updates, {info['wall_s']:.1f} s")
     return 0 if end['cls'] == 'completed' else 1

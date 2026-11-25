@@ -22,6 +22,11 @@ agreement: the systems within the engine's limits (frame-6x6, frame-12x6, frame-
   small-signal response), py_given (the harness handed hf_own's law_identification.f8, --ident), py_mguard (the
   harness's law on its exact response, its guards on hf_own's measured file, --guard-ident: what the runner does with
   --ideal-frf, so the pair hf_ideal / py_mguard compares the loops on the same law model and the same guards).
+pipeline: the agreement redone with the harness's pipeline (its default since Package F; the earlier arms ran without
+  it): py_mguard_p and py_given_p on the 110 cases the gain does not change (the gain-free case, against hf_own's
+  file), py_mguard_pg and py_given_pg on the 22 it changes (the case with its gain, against hf_own_g's file), so the
+  sets of record pair them with hf_ideal / hf_own and hf_ideal_g / hf_own_g as Package D's final_sets.py does. Reads
+  <base>/changed_by_gain.json and the case files the agreement set wrote; runs nothing on the runner.
 pilot: the Hertzforge version on the systems within the limits, every tier, s00: matrix on every test the problem
   built (T1 to T5, L1), the other laws on T3 and T4; and two block D structures (frame-6x6 and frame-12x6,
   realistic, softening only) on matrix T1. One list, hf_own.
@@ -87,9 +92,27 @@ def pilot_jobs(problems):
     return out
 
 
+def pipeline_jobs(problems, base, harness, python):
+    changed = set(json.load(open(os.path.join(base, 'changed_by_gain.json'))))
+    arms = {}
+    for j in agreement_jobs(problems):
+        key = f"{j['problem']}/{j['test']}__{j['law']}"
+        g = key in changed
+        sub, hf, sfx = ('cases', 'hf_own_g', '_pg') if g else ('cases_gainfree', 'hf_own', '_p')
+        case = os.path.join(base, sub, key + '.json')
+        own = os.path.join(base, hf, key)
+        for arm, flag in (('py_mguard', '--guard-ident'), ('py_given', '--ident')):
+            arms.setdefault(arm + sfx, []).append(dict(id=f'{arm}{sfx}:{key}', problem=j['problem'], test=j['test'],
+                                                       law=j['law'], cmd=[python, harness, case, flag, own],
+                                                       out=os.path.join(base, arm + sfx, key)))
+    for arm, lst in arms.items():
+        json.dump(lst, open(os.path.join(base, f'jobs_{arm}.json'), 'w'), indent=1)
+        print(arm, len(lst), 'jobs')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument('set', choices=('agreement', 'pilot'))
+    ap.add_argument('set', choices=('agreement', 'pilot', 'pipeline'))
     ap.add_argument('--problems', required=True)
     ap.add_argument('--base', required=True)
     ap.add_argument('--runner', required=True)
@@ -98,6 +121,8 @@ def main(argv=None):
     problems, base, runner = (os.path.abspath(x) for x in (a.problems, a.base, a.runner))
     harness = os.path.join(SINE, 'pyloop', 'harness.py')
     os.makedirs(base, exist_ok=True)
+    if a.set == 'pipeline':
+        return pipeline_jobs(problems, base, harness, a.python)
     js = agreement_jobs(problems) if a.set == 'agreement' else pilot_jobs(problems)
     arms = {}
     changed = []

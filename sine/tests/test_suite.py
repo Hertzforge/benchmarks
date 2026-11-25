@@ -571,6 +571,23 @@ class TestHarness(unittest.TestCase):
         want = fm.frf([f0])[0] @ D
         self.assertLess(np.abs(got - want).max() / np.abs(want).max(), 1e-6)
 
+    def test_the_pipeline_is_recorded_and_the_switch_leaves_it_out(self):
+        out_on, out_off = tempfile.mkdtemp(dir=TMP), tempfile.mkdtemp(dir=TMP)
+        case = os.path.join(P(LIN), 'cases', 'T4__matrix.json')
+        from pyloop import harness as hz
+        with np.errstate(all='ignore'), contextlib.redirect_stdout(io.StringIO()):
+            hz.main([case, '--root', os.path.join(TMP, 'problems'), '--out', out_on])
+            hz.main([case, '--root', os.path.join(TMP, 'problems'), '--out', out_off, '--no-pipeline'])
+        on, off = (json.load(open(os.path.join(d, 'run.json'))) for d in (out_on, out_off))
+        pp = on['identification']['pipeline']
+        self.assertTrue(on['options']['pipeline'])
+        self.assertEqual(pp['pipeline_frames'], 264)
+        self.assertEqual(pp['lag_frames'] - pp['pipeline_frames'], pp['turn_samples'])
+        self.assertAlmostEqual(pp['transport_delay_s'], pp['lag_frames'] / 8192.0, places=15)
+        self.assertFalse(off['options']['pipeline'])
+        self.assertIsNone(off['identification']['pipeline'])
+        self.assertNotEqual(on['history']['drive_re'], off['history']['drive_re'], 'the check cannot fail')
+
     def test_refuses_a_case_whose_structure_changed(self):
         case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))
         case['structure']['sha256'] = '0' * 64
@@ -579,6 +596,128 @@ class TestHarness(unittest.TestCase):
         out = os.path.join(TMP, 'refused_run')
         self.assertEqual(self.run_case(path, out), 2)
         self.assertFalse(os.path.exists(out))
+
+
+class TestPipeline(unittest.TestCase):
+    """The runner's pipeline in the harness (Package F): each check is shown to fail on a case built to break it."""
+
+    def case(self, test='T4'):
+        from pyloop import harness as hz
+        return hz.Case(os.path.join(P(LIN), 'cases', f'{test}__matrix.json'), os.path.join(TMP, 'problems'))
+
+    def test_the_generator_is_splitmix64(self):
+        # Vigna's splitmix64 from state 0, its published first four outputs; the engine's uniform is the top 53 bits
+        from pyloop import harness as hz
+        want = [0xE220A8397B1DCDAF, 0x6E789E6AA1B965F4, 0x06C45D188009454F, 0xF88BB8A8724C81EC]
+        got = [int(u * 2 ** 53) for u in hz.splitmix_uniform(0, 4)]
+        self.assertEqual(got, [z >> 11 for z in want])
+        self.assertNotEqual([int(u * 2 ** 53) for u in hz.splitmix_uniform(1, 4)], got, 'the check cannot fail')
+
+    def test_the_restated_lag_is_the_shots_own_cross_correlation(self):
+        # the frequency-domain restatement against measure_lag done literally: the shot's first realization played
+        # twice from rest through the stepped structure behind the pipeline, its second copy cross-correlated with the
+        # drive (ident.rs measure_lag). On the dwell's narrow band the drives' cross-terms decide the peak: the
+        # restatement that leaves them out (each drive alone) gives another lag, and so does a wrong pipeline
+        from pyloop import harness as hz
+        from pyloop.fitted import FittedModal
+        for test in ('T4', 'T1'):
+            case = self.case(test)
+            fs, n = case.fs, hz.record_len_for(case.fs)
+            self.assertEqual(n, 32768)
+            k = np.arange(n // 2 + 1)
+            f = k * fs / n
+            on = np.flatnonzero((k > 0) & (k < n // 2) & (f >= case.ident_band[0]) & (f <= case.ident_band[1]))
+            m = case.st.n_drives
+            X = np.zeros((m, n // 2 + 1), complex)
+            X[:, on] = np.exp(2j * np.pi * hz.splitmix_uniform(hz.IDENT_SEED, m * on.size).reshape(m, on.size))
+            w = np.fft.irfft(X, n=n, axis=1).T
+            w = np.concatenate([w, w])                                         # the rows as the engine writes them
+            x = np.concatenate([np.zeros((hz.PIPELINE_FRAMES, m)), w])[:2 * n]   # what reaches the structure
+            fm = FittedModal(case.st, case.controls, fs)
+            with np.errstate(all='ignore'):
+                y = np.concatenate([fm.step(case.gain * x[i:i + 4096]) for i in range(0, 2 * n, 4096)])
+            xs, ys = np.fft.rfft(w[n:].T, axis=1), np.fft.rfft(y[n:].T, axis=1)
+            s = sum(np.abs(np.fft.irfft(ys[i][None] * np.conj(xs), n=n, axis=1)).sum(0) for i in range(ys.shape[0]))
+            literal = int(np.argmax(s[:n // 2]))
+            with np.errstate(all='ignore'):
+                self.assertEqual(hz.engine_lag(case), literal, test)
+                self.assertNotEqual(hz.engine_lag(case, pipeline_frames=hz.PIPELINE_FRAMES - 10), literal,
+                                    'the check cannot fail')
+            if test == 'T4':
+                Hl = hz.small_signal_frf(case, f[on])
+                alone = np.zeros(n)
+                for i in range(Hl.shape[1]):
+                    for j in range(m):
+                        Y = np.zeros(n // 2 + 1, complex)
+                        Y[on] = Hl[:, i, j] * np.exp(-2j * np.pi * f[on] * hz.PIPELINE_FRAMES / fs)
+                        alone += np.abs(np.fft.irfft(Y, n=n))
+                self.assertNotEqual(int(np.argmax(alone[:n // 2])), literal, 'the cross-terms are not needed here')
+
+    def test_the_station_plays_the_drive_late_and_reads_c_as_h_d(self):
+        # with the pipeline the structure takes the written drive PIPELINE_FRAMES samples late, and a steady reading is
+        # still H D on the exact response; the station without the retarded phase would read H D exp(-j w P)
+        from pyloop import harness as hz
+        case = self.case()
+        f0 = 101.3
+        D = np.array([1.0, 0.5j, -0.3, 0.2, 0.0, 0.1]) * 0.05
+        got = {}
+        for P_ in (0, hz.PIPELINE_FRAMES):
+            sta = hz.Station(case, P_)
+            sta.set_bandwidth(f0)
+            seen = []
+            step0 = sta.fitted.step
+            sta.fitted.step = lambda u, s0=step0: (seen.append(u.copy()), s0(u))[1]
+            written = []
+            with np.errstate(all='ignore'):
+                for _ in range(600):
+                    C, _, d = sta.play(D, D, f0)
+                    written.append(d)
+            x, w = np.concatenate(seen) / case.gain, np.concatenate(written)
+            self.assertEqual(float(np.abs(x[:P_]).max()) if P_ else 0.0, 0.0)
+            self.assertLess(np.abs(x[P_:] - w[:w.shape[0] - P_]).max(), 1e-12)
+            got[P_] = C
+            if P_:
+                self.assertGreater(np.abs(x[P_ - 1:] - w[:w.shape[0] - P_ + 1]).max(), 1e-3, 'the check cannot fail')
+        H = hz.small_signal_frf(case, [f0])[0][:len(case.controls)]
+        want = H @ D
+        err = lambda C: np.linalg.norm(C - want) / np.linalg.norm(want)  # noqa: E731
+        self.assertLess(err(got[hz.PIPELINE_FRAMES]), 0.02)
+        self.assertLess(err(got[0]), 0.02)
+        unretarded = want * np.exp(-2j * np.pi * f0 * hz.PIPELINE_FRAMES / case.fs)
+        self.assertGreater(np.linalg.norm(got[hz.PIPELINE_FRAMES] - unretarded) / np.linalg.norm(want), 0.5,
+                           'the check cannot fail')
+
+    def test_the_law_is_told_the_engines_loop_delay(self):
+        # the law's transport delay is lag_frames / fs (service.rs make_law_setup) and its group delay is read on the
+        # response with the lag taken out (law-math speed.rs: the identification's group delay + the transport)
+        from pyloop import harness as hz
+        from pyloop.ident import Identification
+        case = self.case()
+        idn = hz.identify(case)
+        L = 335
+        s = hz.make_setup(case, idn, L)
+        self.assertEqual(s.transport_delay_s, L / case.fs)
+        self.assertEqual(hz.make_setup(case, idn).transport_delay_s, 0.0)
+        g = idn.grid_hz
+        turned = Identification(g, idn.H0 * np.exp(2j * np.pi * g * (L - 264) / case.fs)[:, None, None], idn.T0, idn.coh,
+                                idn.coh_limit, idn.trust, {})
+        import copy
+        x = copy.copy(idn)
+        x.gd_turn, x._gd = (L - 264, case.fs), None
+        fq = case.test['freq_hz']
+        self.assertAlmostEqual(x.group_delay_at(fq, 2.0), turned.group_delay_at(fq, 2.0), delta=1e-15)
+        self.assertGreater(abs(idn.group_delay_at(fq, 2.0) - turned.group_delay_at(fq, 2.0)), 1e-3, 'the check cannot fail')
+
+    def test_an_engine_files_turn_must_be_its_lag_less_the_pipeline(self):
+        from pyloop import harness as hz
+        case = self.case()
+        idn = hz.identify(case)
+        idn.level.update(lag_frames=300.0, frames_ahead=8, delay_turn_samples=36.0)
+        P_, L, _ = hz.pipeline_for(case, idn, idn)
+        self.assertEqual((P_, L), (264, 300))
+        idn.level['delay_turn_samples'] = 35.0
+        with self.assertRaises(hz.Refused):
+            hz.pipeline_for(case, idn, idn)
 
 
 if __name__ == '__main__':
