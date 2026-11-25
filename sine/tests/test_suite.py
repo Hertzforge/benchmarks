@@ -257,6 +257,16 @@ class TestScorer(unittest.TestCase):
         c = self.score('T3', stop_fraction=0.25, outcome_class='aborted')
         self.assertLess(c['completion']['coverage'], 0.26)
 
+    def test_coverage_counts_from_where_full_level_began(self):
+        # the engine runs the lower rungs on the test's own clock: a whole run covers what follows them
+        for t in ('T1', 'T3'):
+            c = self.score(t, ladder_in_test=True)
+            self.assertGreater(c['completion']['coverage'], 0.99, t)
+            self.assertGreater(c['completion']['ladder_share'], 0.0, t)
+        # and an early end still reads as one
+        c = self.score('T1', ladder_in_test=True, stop_fraction=0.5, outcome_class='stopped_by_protective_default')
+        self.assertLess(c['completion']['coverage'], 0.6)
+
     def test_nothing_judged_is_not_scored(self):
         c = self.score('T1', all_unjudged=True)
         self.assertFalse(c['scored'])
@@ -363,6 +373,56 @@ class TestPublication(unittest.TestCase):
     def test_suite_code_is_clean(self):
         n, found = pub.run([SINE])
         self.assertEqual(found, [])
+
+
+
+# ------------------------------------------------------------------------------------------------ the Python harness
+@NEEDS
+class TestHarness(unittest.TestCase):
+    def run_case(self, case_path, out):
+        from pyloop import harness as hz
+        with np.errstate(all='ignore'), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return hz.main([case_path, '--root', os.path.join(TMP, 'problems'), '--out', out])
+
+    def test_a_linear_dwell_completes_and_the_scorer_reads_it(self):
+        out = tempfile.mkdtemp(dir=TMP)
+        code = self.run_case(os.path.join(P(LIN), 'cases', 'T4__matrix.json'), out)
+        self.assertEqual(code, 0)
+        with np.errstate(all='ignore'):
+            c = sc.score(P(LIN), out)
+        self.assertTrue(c['scored'])
+        self.assertEqual(c['completion']['outcome'], 'completed')
+        self.assertGreater(c['completion']['coverage'], 0.99)
+        self.assertGreater(c['amplitude']['iec_check_point']['share_inside'], 0.99)
+
+    def test_the_tracked_response_is_the_structure_times_the_drive(self):
+        # at the end of the linear dwell the tracked controls are H(f) times the drive in force (noise 1e-3); the
+        # conjugate convention is shown to fail the same check
+        import reference_model as rm
+        out = tempfile.mkdtemp(dir=TMP)
+        self.run_case(os.path.join(P(LIN), 'cases', 'T4__matrix.json'), out)
+        r = json.load(open(os.path.join(out, 'run.json')))
+        h = r['history']
+        st = rm.load_structure(P(LIN))
+        names = [o['name'] for o in st.outputs]
+        rows = [names.index(x) for x in r['structure']['controls']]
+        C = np.array(h['control_re'][-1]) + 1j * np.array(h['control_im'][-1])
+        D = np.array(h['drive_re'][-2]) + 1j * np.array(h['drive_im'][-2])
+        with np.errstate(all='ignore'):
+            H = rm.discrete_frf(st, [h['frequency_hz'][-1]], sm.FS, rows=rows)[0]
+        good = np.linalg.norm(C - H @ D) / np.linalg.norm(C)
+        bad = np.linalg.norm(C - H.conj() @ D) / np.linalg.norm(C)
+        self.assertLess(good, 0.02)
+        self.assertGreater(bad, 0.1)
+
+    def test_refuses_a_case_whose_structure_changed(self):
+        case = json.load(open(os.path.join(P(LIN), 'cases', 'T4__matrix.json')))
+        case['structure']['sha256'] = '0' * 64
+        path = os.path.join(TMP, 'bad_case.json')
+        json.dump(case, open(path, 'w'))
+        out = os.path.join(TMP, 'refused_run')
+        self.assertEqual(self.run_case(path, out), 2)
+        self.assertFalse(os.path.exists(out))
 
 
 if __name__ == '__main__':

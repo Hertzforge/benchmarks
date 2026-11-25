@@ -19,7 +19,7 @@ def _ri(z):
 
 def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0, rate_factor=1.0, stop_fraction=None,
              dwell_offset=0.0, mode_shift=0.0, bin_bump_db=None, limit_over_db=None, outcome_class='completed',
-             all_unjudged=False, tick=0.01):
+             all_unjudged=False, tick=0.01, ladder_in_test=False):
     """Write `out`/run.json. gain_db: None or a function f -> dB (scalar or per control) applied to every control.
     bin_bump_db: (f_hz, dB): one sweep bin whose largest error is that much, its point untouched."""
     pr = sc.Problem(problem)
@@ -52,15 +52,22 @@ def make_run(problem, test_id, out, gain_db=None, phase_deg=0.0, drive_scale=1.0
     if stop_fraction is not None:
         keep = max(2, int(stop_fraction * f.size))
         f, t = f[:keep], t[:keep]
-    # the ladder's rungs before the judged level, at the first frequency, 2 s each, every 0.5 s
-    nr = 4 * len(lad)
-    fr = np.full(nr, f0)
-    tr = np.arange(1, nr + 1) * 0.5
-    lv = np.repeat(lad, 4)
-    f_all = np.concatenate([fr, f])
-    t_all = np.concatenate([tr, 2.0 * len(lad) + t])
-    lvl = np.concatenate([lv, np.zeros(f.size)])
-    judged = np.concatenate([np.zeros(nr, bool), np.full(f.size, not all_unjudged)])
+    if ladder_in_test:
+        # the engine's schedule: the lower rungs run on the test's own clock, over its first 2 s each
+        f_all, t_all = f, t
+        k = np.minimum((t_all // 2.0).astype(int), len(lad))
+        lvl = np.array(list(lad) + [0.0])[k]
+        judged = (lvl == 0.0) & (not all_unjudged)
+    else:
+        # the ladder's rungs before the judged level, at the first frequency, 2 s each, every 0.5 s
+        nr = 4 * len(lad)
+        fr = np.full(nr, f0)
+        tr = np.arange(1, nr + 1) * 0.5
+        lv = np.repeat(lad, 4)
+        f_all = np.concatenate([fr, f])
+        t_all = np.concatenate([tr, 2.0 * len(lad) + t])
+        lvl = np.concatenate([lv, np.zeros(f.size)])
+        judged = np.concatenate([np.zeros(nr, bool), np.full(f.size, not all_unjudged)])
     R = pr.reference_at(f_all) * 10 ** (lvl / 20)[:, None]
     g = np.zeros((f_all.size, R.shape[1]))
     if gain_db is not None:

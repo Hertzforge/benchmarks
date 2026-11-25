@@ -158,6 +158,7 @@ def read_run(path, st=None):
     r.f = np.asarray(h['frequency_hz'], float)
     r.level_db = np.asarray(h['level_db'], float)
     r.judged = np.asarray(h['judged'], bool) if h.get('judged') is not None else np.ones(r.t.size, bool)
+    r.settling = np.asarray(h['settling'], bool) if h.get('settling') is not None else np.zeros(r.t.size, bool)
     r.C = _cx(h, 'control')
     r.Rrun = _cx(h, 'reference')
     r.D = _cx(h, 'drive')
@@ -423,10 +424,13 @@ def frequency_reading(pr, run, mask, test, w):
                    duration_tolerance=sm.DURATION_TOL)
     elif test['kind'] == 'dwell' and f.size:
         err = np.abs(f / test['dwell_hz'] - 1)
-        full = run.level_db >= FULL_LEVEL_DB
+        # the engine's dwell clock stops in its settle window: the dwell is the full-level time from where that window
+        # closed (the run's settling flag) to the end
+        full = (run.level_db >= FULL_LEVEL_DB) & ~run.settling
         held = float(run.t[full][-1] - run.t[full][0]) if full.sum() > 1 else 0.0
         out = dict(largest_frequency_error_pct=float(100 * err.max()), within_iec_fixed_2_pct=bool(err.max() <= 0.02),
                    within_mil_0_1_pct=bool(err.max() <= 0.001), full_level_s=held, scheduled_s=test['seconds'],
+                   held_from='the first full-level update outside the engine\'s settle window',
                    duration_within_5_pct=bool(abs(held / test['seconds'] - 1) <= sm.DURATION_TOL['fraction']),
                    tolerances=[sm.FREQ_TOL['iec_fixed'], sm.FREQ_TOL['mil'], sm.DURATION_TOL])
     elif test['kind'] == 'stepped' and f.size:
@@ -442,17 +446,34 @@ def completion_reading(pr, run, mask, test):
     o = run.outcome
     full = run.level_db >= FULL_LEVEL_DB
     band = test['band_hz']
+    # the engine runs the ladder's lower rungs on the test's own clock (its schedule.rs), so the start of a sweep or a
+    # stepped test is run below full level: coverage is counted from where full level began to the test's far end, and
+    # the share run below full level first is reported as ladder_share
+    ladder_share = 0.0
     if test['kind'] == 'sweep':
-        cov = float(abs(np.log2(run.f[full].max() / run.f[full].min())) / np.log2(band[1] / band[0])) if full.sum() > 1 else 0.0
-        what = 'octaves at full level over the band\'s octaves'
+        far = band[1] if test.get('direction', 'up') == 'up' else band[0]
+        near = band[0] if far == band[1] else band[1]
+        n_band = np.log2(band[1] / band[0])
+        if full.sum() > 1:
+            f0 = run.f[np.flatnonzero(full)[0]]
+            span = abs(np.log2(far / f0))
+            cov = float(min(1.0, abs(np.log2(run.f[full].max() / run.f[full].min())) / span)) if span > 0 else 0.0
+            ladder_share = float(abs(np.log2(f0 / near)) / n_band)
+        else:
+            cov = 0.0
+        what = 'octaves at full level over the octaves from where full level began to the band\'s far end'
     elif test['kind'] == 'stepped':
         lad = np.asarray(test['frequencies_hz'])
         hit = np.zeros(lad.size, bool)
+        first = lad.size
+        if full.any():
+            first = int(np.argmin(np.abs(np.log(run.f[np.flatnonzero(full)[0]] / lad))))
         if mask.any():
             k = np.argmin(np.abs(np.log(run.f[mask][:, None] / lad[None, :])), axis=1)
             hit[np.unique(k)] = True
-        cov = float(hit.mean())
-        what = 'steps with a judged update over the steps'
+        cov = float(hit[first:].mean()) if first < lad.size else 0.0
+        ladder_share = float(first / lad.size)
+        what = 'steps with a judged update over the steps from the first at full level to the last'
     else:
         tj = float(run.t[mask][-1] - run.t[mask][0]) if mask.sum() > 1 else 0.0
         jw = test['seconds'] - test['settle']['seconds']
@@ -460,7 +481,7 @@ def completion_reading(pr, run, mask, test):
         what = 'judged seconds over the dwell\'s seconds after its settle window'
     return dict(outcome=o.get('class'), engine_outcome=o.get('engine_outcome'), guard=o.get('guard'), channel=o.get('channel'),
                 at_hz=o.get('frequency_hz'), at_s=o.get('time_s'), at_level_db=o.get('level_db'), message=o.get('message'),
-                coverage=cov, coverage_what=what, judged_updates=int(mask.sum()), updates=int(run.t.size),
+                coverage=cov, coverage_what=what, ladder_share=ladder_share, judged_updates=int(mask.sum()), updates=int(run.t.size),
                 run_seconds=float(run.t[-1] - run.t[0]) if run.t.size > 1 else 0.0)
 
 

@@ -130,7 +130,14 @@ Every test runs a ladder before its judged level: levels -12, -9, -6, -3 and 0 d
 level (the engine's default level table), each rung but the last held 2 s (the runner's default
 rung), the last held to the end of the test (the runner's `ladder`). A one-level run on a realistic
 structure aborts at the end of the settle window (the runner's experiment MSNB-A-E1), so every test
-climbs. The
+climbs. The engine runs the ladder on the test's own clock (`hertzforge-mimo-sine` `schedule.rs`:
+the ladder ticks beside the test plan; a dwell's clock, a step's clock and the ladder's stop in a
+settle window, a sweep's does not). So the lower rungs take the first part of the test: a sweep
+runs its first 8 s and more below full level (1 octave a minute: from 20 Hz to about 22 Hz, more
+with the settle windows), a stepped test its first steps. A dwell's case holds the rungs' 8 s on
+top of the dwell (`dwell_s` = the T4 seconds + 8), so the dwell at full level is the T4 seconds
+after the last settle window. The scorer counts a sweep's and a stepped test's coverage from where
+full level began and reports the share run below full level first (`ladder_share`). The
 engine identifies at its own level (-20 dB, its default) first. Judged: updates at full level, the
 law's answer used, outside the engine's settle window (the runner's `judged`), and for a step or a
 dwell outside the suite's own settle window, counted from the first full-level update of the step
@@ -183,7 +190,7 @@ relative to the problems folder, the runner's `--root`.
 | `controls` | The structure's control outputs, in file order |
 | `fs_hz` | 8192 |
 | `law` | `id`, `params` `{}` (the law's defaults) |
-| `test` | sweep: `band_hz`, `rate_oct_per_min`, `direction`; stepped: `band_hz`, `steps_per_octave`, `step_s`; dwell: `freq_hz`, `dwell_s` |
+| `test` | sweep: `band_hz`, `rate_oct_per_min`, `direction`; stepped: `band_hz`, `steps_per_octave`, `step_s`; dwell: `freq_hz`, `dwell_s` (the T4 seconds plus the 8 s of the lower rungs, section 5) |
 | `reference` | `<problem>/case_reference.json`, its SHA-256, `phase` `auto` |
 | `full_level_scale` | 1 (the reference file is at full level) |
 | `ladder` | `levels_db` [-12, -9, -6, -3, 0], `rung` `{"seconds": 2}` |
@@ -221,8 +228,8 @@ sweep each point stands for its 1/48-octave bin; for a step or a dwell, time.
 | `resonances` | For each article mode in band, its half-power band (at least 1/96 octave each side; as tested where the runner follows the mode): the worst error at the controls and held-out gauges on the way through it; counts of resonances over 1.5, 3 and 6 dB |
 | `practice` | The proposed practice's report card (Hertzforge Journal 2026-001), read for a tone: line 1 level within 1.5 dB; line 2 pattern graded A (3 dB), B (4.5), C (6); line 3 over-test alarm at +6 dB; line 4 share of held-out bands more than 3 dB under; line 5 declared deviation and law error; line 6 shakers, controls, condition, exact-fit flag. `departures` lists every departure from the article's statement |
 | `stress` | Per element, the largest peak fibre stress over the judged run as tested against the same under the ideal drive at the same frequencies |
-| `frequency` | Sweep: realized rate against the stated, share of the sweep within +/-10 %, duration within 5 %. Dwell and steps: largest frequency error against +/-2 % (IEC) and +/-0.1 % (MIL), dwell duration within 5 % |
-| `completion` | The outcome and why the run ended; the share of the test covered at full level |
+| `frequency` | Sweep: realized rate against the stated, share of the sweep within +/-10 %, duration within 5 %. Dwell and steps: largest frequency error against +/-2 % (IEC) and +/-0.1 % (MIL), dwell duration within 5 % (the full-level time from where the engine's settle window closed) |
+| `completion` | The outcome and why the run ended; the share of the test covered at full level (a sweep or a stepped test counted from where full level began; `ladder_share` the share run below full level before it) |
 | `drive` | Largest drive norm and drive voltage; effort over the ideal drive (dB) |
 | `state` | Stage 2: each followed article mode's largest frequency change as tested, beside the article in service (the Random problem's `service_state`) and the quasi-steady state at full level |
 | `limit` | L1: the limit channel against its bound, worst and share over |
@@ -277,3 +284,70 @@ the runner's `run.json`, the batch's `batch.json` (the suite's code hash, the ru
 case's SHA-256, the runner's exit status) and the scorer's `card.json` (with the code hash). The
 batch stops starting jobs when the free disk is under 50 GB. The log names each job and gives no
 outcome; its last line is `BATCH END <batch>: N done, F failed, S skipped`.
+`--runner` may be the Python harness (`sine/pyloop/harness.py`, section 13); a `.py` runner is run
+with the batch's own Python.
+
+## 13. The Python Harness
+
+`python3 sine/pyloop/harness.py <case> --root <problems> --out <run folder>` runs one case with no
+Hertzforge build and writes `run.json` in the runner's `msnb-run/1` layout (and `timing.json`),
+so the same scorer reads either. Exit status as the runner's: 0 completed, 1 another end, 2
+refused (nothing written). Agreement between the harness and the engine has not been checked; it
+is a separate step.
+
+The laws (`sine/pyloop/`) are the research testbed's (`msine_gym` and its `build_m` reference
+compositions). Changed from the testbed: the imports; the controller keeps only its quasi-steady
+loop (what the parity vectors were made with); `identification` and `structures` keep only the
+classes the laws read; the loop-speed rule and the secant's settle count read the tracker's delay
+factor and a transport delay from the setup (the testbed's `1 / pi` and 0 when the setup gives
+none, as the shipped law math's defaults). `paired` is `PairedRef`, `ratio` `RatioPerControl`
+(pairing by reference), `steepest_descent` `SteepestDescent`, `secant` `SecantComplexGain` (carry
+factor), each at the shipped manifest's defaults (`params` `{}`; other parameters are refused).
+`matrix` is `ShippedMatrix` (`pyloop/matrix_shipped.py`): `RefMatrix` (free phase in phase) with
+the shipped law's update restated from `matrix.rs`: the reference's change carried backward from
+the reference told at the last update, the correction aimed at the reference as the trackers read
+it (`seen_reference`), the cut part of the last carry carried again (`recarry`), the notch scale
+on the reference aimed at.
+
+They are held to the shipped laws' parity vectors (`tests/data`, copied from the Hertzforge
+repository at 9a4c7b80): 30 runs (each law and schedule, the matrix runs for `RefMatrix` and
+`ShippedMatrix`), largest relative difference of drive and controls 5.6e-15
+(`tests/test_pyloop.py`; a different law is shown to fail by more than 0.1). The vectors have a
+flat reference, the phase specified or in phase, no guards and the quasi-steady loop: they cannot
+see the shipped matrix's backward carry, seen reference or recarry (a test shows `RefMatrix` and
+`ShippedMatrix` part on a sloped reference), nor the loop delays or the notch scale. What is not
+restated of the shipped laws: the modal fit's group limits, its splitting of large groups and the
+windows it leaves out (where the shipped matrix carries nothing); the Python fit fits every group
+jointly and the matrix carries everywhere. The Python fit over a sweep's band took 210 s on
+frame-12x12 s00 (23 modes fitted); a dwell's fit finds no mode (the band is the dwell frequency at
+both ends, as the engine's) and uses the smoothed identification.
+
+What the harness restates from the shipped engine (`hertzforge-mimo-sine` `core.rs`,
+`schedule.rs`; `hertzforge-dsp` `tone.rs`):
+
+| Part | As restated |
+|---|---|
+| Update | The case's `tick_s` in whole samples; the drive ramps linearly over a tick; the tone's frequency is held through a tick and is phase-continuous |
+| Structure | `reference_model.simulate_level` on the controls and limit channels, the structure's own modes and level rule, continued tick to tick; white noise of `noise.rms_m_s2` added, seeded by `noise.seed` |
+| Tracker | Four cascaded one-pole sections on the heterodyned signal, `alpha = B_n / (0.15625 fs)`, `B_n` 10 % of the frequency, at most 100 Hz, set each update |
+| Schedule | The ladder on the test's clock; the dwell's, a step's and the ladder's clocks stop in a settle window, a sweep's does not; the stepped grid from the low edge, `steps_per_octave` an octave |
+| Settle window | `2 x 1.3 / B_n + 3 x` the identification's group delay (largest element form, five-line smoothing, the largest within +/-2 `B_n`), opened at engage, at every level move and at every step |
+| Level carry | The drive in force scaled with each move of the level, by at most 1 dB down and min(1 dB, 240 dB/s x tick) up an update; the law told `engage` (hold) while the window is open |
+| First drive | At engage and at every step the law engages again; its drive bounded to the regularized inverse drive (1e-3) plus 6 dB, or 5 % of the ceilings' norm on an untrusted line |
+| Laws' loop delays | Tracker delay factor 0.625 (the engine's four sections); transport 0 (the identification holds the structure's delays; no pipeline) |
+| Aimed reference | The reference times the notch scale for every law (`law.rs` `aimed_reference`) |
+| Judging | Control error against the reference (notched, with limit channels); abort after `abort_ticks` updates in a row outside the abort band, not counted in a settle window; a limit channel over its abort band ends the run at once; `judged` = at the last level, not settling, the law's answer used |
+| Caps and guards | Change caps per drive against the drive as played; divergence stop after `divergence_s` of binding caps; a drive over its ceiling scales the whole vector; drive abort; 3 law misses a law fault; the runner's time limit `1.5 x (test + rungs) + 60 s` |
+| Protective | `default` and `widened` as the runner's table |
+| Run file | History decimated as the runner's (1/48-octave bins from the band's low edge at each level, with the bins' counts and error extremes; every update for a step or a dwell); `true_modes` from the simulator's own envelopes at the end of each tick, for the modes in the identification's band; outcome classes and guard names as the runner's |
+
+What it leaves out or does differently:
+
+| Part | The harness | The engine |
+|---|---|---|
+| Identification | The exact small-signal response (`reference_model.discrete_frf`) on 0.25 Hz lines over the test band /1.25 to x1.25, every line trusted, coherence 1 | Measured at -20 dB with noise, `max(24, 6 x drives)` records, trust and gate at coherence 0.5 |
+| Lag | The identification includes the structure's delays; no service pipeline delay between the law's answer and the drive | The lag (including the service's block) is measured and taken out of the identification; the drive reaches the structure that many frames later |
+| Backstop notch | Simplified: each limit channel's ratio to the identification's prediction learned from settled readings (3-update smoothing); the drive scaled at once to put the most loaded channel at its bound; the judged reference scaled by the share the inverse drive allows | The engine's notch with its near-bound and hysteresis rules, release rate and a law's notched reference |
+| Units | m/s^2 throughout | The law sees g |
+| Stop | The run ends at the stop; no ramp down (`drive_is_zero` null) | A 120 dB/s ramp to zero |
+| Not modelled | Law requests (never honoured, as the runner's default), the rotation cap (none, as the default), the law's compute budget, kinematic ratings, events (`events` empty), `rung` in sweeps (refused) | |

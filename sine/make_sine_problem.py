@@ -381,12 +381,20 @@ def write_case_reference(folder, st, fg, amp, ph):
                 what='the reference as the runner reads it (msnb-reference/1): the binary reference files at 9 significant digits')
 
 
+def ladder_seconds():
+    """The seconds the ladder's rungs below full level take on the test's own clock (the engine's schedule,
+    hertzforge-mimo-sine schedule.rs: the ladder runs alongside the test plan, and a dwell's clock and the ladder's both
+    stop in a settle window)."""
+    return float(sm.LADDER['per_rung']['seconds']) * (len(sm.LADDER['table_db']) - 1)
+
+
 def case_test(obj, t):
     if TEST_KIND[t] == 'sweep':
         return dict(type='sweep', band_hz=obj['band_hz'], rate_oct_per_min=obj['rate_oct_per_min'], direction=obj['direction'])
     if TEST_KIND[t] == 'stepped':
         return dict(type='stepped', band_hz=obj['band_hz'], steps_per_octave=obj['steps_per_octave'], step_s=obj['step_s'])
-    return dict(type='dwell', freq_hz=obj['dwell_hz'], dwell_s=obj['seconds'])
+    # the engine's dwell clock runs through the lower rungs too: the case's dwell holds them and then the test's seconds
+    return dict(type='dwell', freq_hz=obj['dwell_hz'], dwell_s=g9(obj['seconds'] + ladder_seconds()))
 
 
 def write_cases(folder, sid, meta, tests):
@@ -461,8 +469,24 @@ def main():
                          'so T5 is built on block A')
     ap.add_argument('--no-play', action='store_true', help='skip the finite-play check (tests only)')
     ap.add_argument('--log', default=None)
+    ap.add_argument('--cases-only', action='store_true',
+                    help='rewrite the case files of the problems already under --out from their problem.json and test '
+                         'files (nothing else is written; --random is not read)')
     a = ap.parse_args()
     import plan
+    if a.cases_only:
+        n = 0
+        for sid in sorted(os.listdir(a.out)):
+            folder = os.path.join(a.out, sid)
+            if not os.path.exists(os.path.join(folder, 'problem.json')):
+                continue
+            meta = json.load(open(os.path.join(folder, 'problem.json')))
+            tests = {t: dict(json.load(open(os.path.join(folder, v['file']))), built=True)
+                     for t, v in meta['tests'].items() if v.get('built')}
+            write_cases(folder, sid, meta, tests)
+            n += 1
+        print(f'CASES REWRITTEN: {n} problems')
+        return 0
     if a.design:
         sids, limit_set = plan.structures(), set(plan.limit_structures())
     else:
