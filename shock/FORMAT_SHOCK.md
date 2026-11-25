@@ -45,9 +45,10 @@ follows the standard:
 | Compensation pulses | not read | inside +/-20 % of the peak before and after the pulse |
 | Sawtooth post-pulse slope | not read | terminal peak to inside 20 % of the peak under 10 % of TD |
 | Classical peak band | +/-20 % of the peak | unchanged |
+| Full-level sizing (2026-11-25, still 0.2) | the scale whose median change over the article's modes equals the Random full level's, by bisection between 1e-6 and 1e6 with an exact comparison and no check at the bounds | the same, except: a target above the level rule's reachable change (the median change at the upper bound 1e6) by at most 1e-9 (relative) is sized to the reachable change itself, the smallest scale at which the median reaches it, as a target equal to it always was; a target further above, or a search that still ends at a bound, is refused. Why: the rule's change levels off (each drop at min(1, r), a rise at its cap); on structures 8 and 74 (6x6 strong, softening only) the target exceeded that plateau by 5e-17 (rounding), so the exact comparison never held and the search ran to 1e6 (about 100,000 g). Two other problems (audit 6x6 realistic softening 74, strong softening 72) have a target equal to or just under the plateau and were sized correctly; a rule that sizes to a fraction of the plateau would move them, this one does not. Checked by regenerating all 610 problems: every other target's scale is unchanged byte for byte. The sizing record of a problem so sized adds `reachable_change` and `sized_to`; no field the law or the scorer reads changes, so the version stays 0.2 |
 
 Unchanged: the structures (byte for byte), the pulses and their 11 ms duration, the projection,
-the full-level sizing, the ladder's steps and its +3 dB predicted-over limit, the over-test
+the full-level sizing (but for the bound case in the table), the ladder's steps and its +3 dB predicted-over limit, the over-test
 criteria 1, 2, 3 and 7 and the exposure reading (worst point against +3 dB), the Level reading,
 the run score. The SRS target's shape is specified from 50 Hz and its drive band starts at 50 Hz;
 its points from 10 to 50 Hz are the projected waveform's own SRS, reached through the in-band

@@ -37,6 +37,7 @@ rm = sm.rm
 
 FORMAT = '0.2-draft'
 SCHEMA = 'hertzforge-benchmark-shock-problem/0.2-draft'
+REACH_TOL = 1e-9   # a full-level target above the level rule's reachable change by at most this is sized to it
 LADDER = dict(table_db=[-12.0, -9.0, -6.0, -3.0, -1.5, 0.0], pulses_a_level=6, passes_at_full=3,
               tolerance_db=dict(inner=list(sm.SRS_INNER_DB), inner_share=sm.SRS_INNER_SHARE, outer=list(sm.SRS_OUTER_DB)),
               predicted_over_limit_db=sm.SRS_INNER_DB[1], min_step_db=0.75, max_pulses=60,
@@ -112,22 +113,42 @@ def linear_peaks(st, d):
 
 def size_full_level(st, d_unit):
     """The scale s with median over the article's in-band modes of effect_size(s A / a_ref) equal to the median
-    |frequency change| of the Random suite's full level (level_targets). Returns (s, record)."""
+    |frequency change| of the Random suite's full level (level_targets). Returns (s, record).
+
+    The rule's change levels off (each mode's drop at min(1, r), a rise at its cap), so a target can equal the
+    reachable change (the median at the search's upper bound) to rounding: on structures 8 and 74 (6x6 strong,
+    softening only) the target exceeded it by 5e-17 and the search ran to its bound. A target above the reachable
+    change by at most REACH_TOL (relative) is sized to the reachable change itself, the smallest scale at which the
+    median reaches it (as a target equal to it always was); a target further above, or a search that still ends at a
+    bound, is refused. No other problem's scale changes (FORMAT_SHOCK.md, full-level sizing)."""
     A = linear_peaks(st, d_unit)
     am = sm.article_modes(st)
     want = float(np.median(np.abs(np.asarray(st.raw['level_targets']['frequency_change'])[am])))
     def med(s):
         return float(np.median(sm.effect_size(st, s * A / st.reference_amplitude)[am]))
-    lo, hi = 1e-6, 1e6
+    sid = st.raw.get('structure_id', '')
+    lo, hi = LO0, HI0 = 1e-6, 1e6
+    reach = med(HI0)
+    if want > reach * (1 + REACH_TOL):
+        raise SystemExit(f'REFUSED {sid}: the full level\'s median change {want!r} is beyond the level rule\'s '
+                         f'reachable change {reach!r} (the median at the search\'s upper bound, scale {HI0:g})')
+    capped = want > reach
+    aim = reach if capped else want
     for _ in range(200):
         mid = np.sqrt(lo * hi)
-        lo, hi = (mid, hi) if med(mid) < want else (lo, mid)
+        lo, hi = (mid, hi) if med(mid) < aim else (lo, mid)
         if hi / lo < 1 + 1e-9:
             break
     s = float(np.sqrt(lo * hi))
+    if s >= HI0 * (1 - 1e-6) or s <= LO0 * (1 + 1e-6):
+        raise SystemExit(f'REFUSED {sid}: the full-level search ended at its bound (scale {s!r})')
     r = s * A / st.reference_amplitude
-    return s, dict(random_median_change=want, shock_median_change_linear=med(s), modes_counted=int(am.sum()),
-                   peak_ratio_p10_p50_p90_linear=[float(x) for x in np.percentile(r[am], [10, 50, 90])])
+    rec = dict(random_median_change=want, shock_median_change_linear=med(s), modes_counted=int(am.sum()),
+               peak_ratio_p10_p50_p90_linear=[float(x) for x in np.percentile(r[am], [10, 50, 90])])
+    if capped:
+        rec.update(reachable_change=reach, sized_to=f'the reachable change: the target is above it by '
+                                                   f'{want / reach - 1:.3g}, within {REACH_TOL:g} (FORMAT_SHOCK.md)')
+    return s, rec
 
 
 def state_at_peak(st, run):

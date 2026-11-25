@@ -152,3 +152,34 @@ def test_classical_reading_of_the_pulse_itself(shape):
     assert max(r['compensation_pct']) < 20.0              # the pulse's own compensation is inside the baseline band
     if shape == 'sawtooth':
         assert 7.5 < r['post_slope_pct'][0] < 10.0        # the 10 % TD return reaches 0.2 A at 8 % TD
+
+
+S08 = os.path.join(RANDOM, 'frame-6x6-strong_soft_s08')
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(S08, 'structure.json')), reason='the Random set is not here')
+def test_full_level_sizing_at_the_reachable_change():
+    """Structure 8 (6x6 strong, softening only): the full level's median change equals the rule's plateau to rounding.
+    The exact search ran to its bound 1e6; the sizing now takes the reachable change when the target is above it by
+    rounding (at most 1e-9), and refuses a target further beyond it."""
+    import json
+    import make_shock_problem as mk
+    st = sm.rm.load_structure(os.path.join(S08, 'structure.json'))
+    seed = int(json.load(open(os.path.join(S08, 'problem.json')))['structure']['seed'])
+    H = sm.frf(st)
+    ref_u, _, _, band, _ = mk.unit_target('half_sine', st, seed)
+    d_u = mk.ideal_drive(H, sm.line_mask(band), ref_u)
+    A = mk.linear_peaks(st, d_u)
+    am = sm.article_modes(st)
+    med = lambda s: float(np.median(sm.effect_size(st, s * A / st.reference_amplitude)[am]))
+    want = float(np.median(np.abs(np.asarray(st.raw['level_targets']['frequency_change'])[am])))
+    assert want > med(1e6) and want - med(1e6) < 1e-15                 # the defect: short of the target by rounding
+    s, rec = mk.size_full_level(st, d_u)
+    assert 100 < s < 2000                                                # was 999999.9996
+    assert rec['reachable_change'] == med(1e6)
+    assert abs(rec['shock_median_change_linear'] / rec['reachable_change'] - 1) < 1e-9   # the bracket's width
+    assert med(s * (1 - 1e-6)) < rec['reachable_change']                # the smallest such scale
+    raw = copy.deepcopy(st.raw)
+    raw['level_targets']['frequency_change'] = [2 * x for x in raw['level_targets']['frequency_change']]
+    with pytest.raises(SystemExit, match='beyond the level rule'):
+        mk.size_full_level(sm.rm.Structure(raw), d_u)
