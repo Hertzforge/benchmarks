@@ -516,13 +516,24 @@ class TestHarness(unittest.TestCase):
         def write(t):
             run = dict(structure=dict(sha256=case.raw['structure']['sha256'], fs_hz=case.fs, controls=case.raw['controls'],
                                       limits=[], drives=case.drive_names),
-                       identification=dict(source='engine', ideal_vs_measured=dict(delay_turn_samples=t),
+                       identification=dict(source='engine', ideal_vs_measured=dict(delay_turn_samples=t), lag_frames=lag,
                                            law_given=dict(file='law_identification.f8', sha256=sha, lines=int(g.size),
                                                           controls=n, limits=0, drives=m)))
             json.dump(run, open(os.path.join(d, 'run.json'), 'w'))
             return hz.identification_from_run(case, d)
+        lag = 301.0
         got = write(turn)
         self.assertLess(np.abs(got.H0 - H).max() / np.abs(H).max(), 1e-12)
+        # the settle window's structure term on the file read back is the engine's on the file as written (core.rs
+        # settle_s: 3 x its group delay + lag / fs); without the added term it is not
+        from pyloop.ident import Identification
+        written = Identification(g, H * rot, idn.T0, idn.coh, idn.coh_limit, idn.trust, {})
+        for f in (0.5 * (g[0] + g[-1]), g[0] + 0.3 * (g[-1] - g[0])):
+            engine = 3.0 * written.group_delay_at(f, 2.0) + lag / case.fs
+            here = 3.0 * got.level['as_written'].group_delay_at(f, 2.0) + got.level['lag_frames'] / case.fs
+            self.assertAlmostEqual(here, engine, delta=1e-12)
+            # read from the turned-back response, the window is not the engine's
+            self.assertGreater(abs(3.0 * got.group_delay_at(f, 2.0) + lag / case.fs - engine), 1e-3, 'the check cannot fail')
         self.assertTrue(np.all(got.trust))
         wrong = write(-turn)
         self.assertGreater(np.abs(wrong.H0 - H).max() / np.abs(H).max(), 0.1)

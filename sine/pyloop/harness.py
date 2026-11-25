@@ -287,11 +287,16 @@ def identification_from_run(case, run_dir):
     coh_l = a[:, o:o + p].copy()
     o += p
     trusted = a[:, o] > 0.5
+    # the engine's settle window reads the file as written and adds its lag once (core.rs settle_s: 3 x the group
+    # delay + lag / fs); the group delay estimate takes |d arg H / d w| and maxima, so a turn does not add to it
+    # uniformly and the window is read from the file as written
+    as_written = Identification(g, np.ascontiguousarray(H), np.ascontiguousarray(T), coh, coh_l, trusted, {})
     back = np.exp(-1j * TWO_PI * g * float(turn) / case.fs)[:, None, None]
     H, T = np.ascontiguousarray(H * back), np.ascontiguousarray(T * back)
     return Identification(g, H, T, coh, coh_l, trusted,
                           dict(what='the engine run\'s law_identification.f8, turned back by its delay turn',
-                               source=ig.get('source'), file_sha256=lg['sha256'], delay_turn_samples=float(turn)))
+                               source=ig.get('source'), file_sha256=lg['sha256'], delay_turn_samples=float(turn),
+                               lag_frames=float(ig['lag_frames']), as_written=as_written))
 
 
 def make_setup(case, idn):
@@ -452,9 +457,13 @@ def _db(x):
     return 20.0 * np.log10(np.maximum(np.abs(x), 1e-300))
 
 
-def run_case(case, ident=None):
+def run_case(case, ident=None, guard_ident=None):
+    """`ident` is the law's identification (the exact response when None); `guard_ident` the controller's own, for the
+    settle window, the first drive's bound and the notch's predictions (`ident` when None). The runner with
+    `--ideal-frf` hands only its law the ideal response and keeps its measured identification for the rest."""
     t_wall = time.perf_counter()
     idn = identify(case) if ident is None else ident
+    gid = idn if guard_ident is None else guard_ident
     setup = make_setup(case, idn)
     law = case.law_cls(setup, **case.law_params)
     sched = Schedule(case)
@@ -466,7 +475,11 @@ def run_case(case, ident=None):
 
     def settle_s(f):
         b = tracking_bw(f)
-        return SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * idn.group_delay_at(f, 2.0 * b)
+        aw = gid.level.get('as_written')
+        if aw is None:
+            return SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * gid.group_delay_at(f, 2.0 * b)
+        return (SETTLE_TRACKER_TIMES * SETTLE_WIDTHS / b + SETTLE_STRUCTURE_TIMES * aw.group_delay_at(f, 2.0 * b)
+                + gid.level['lag_frames'] / case.fs)
 
     rec = []
     state = dict(level_db=sched.level_db(), target_db=sched.level_db(), engage_settle=True, misses=0, cap_run=0.0)
@@ -486,7 +499,7 @@ def run_case(case, ident=None):
     def notch_observe():
         # the ratio of each limit channel's reading to the identification's prediction, from settled readings only,
         # smoothed over NOTCH_SMOOTHING updates (simplified: see FORMAT_SINE.md, "The Python Harness")
-        T0 = idn.T0_at(f)
+        T0 = gid.T0_at(f)
         pf = np.abs(T0 @ D_force)
         fresh = pf > 1e-12
         smp = np.where(fresh, np.abs(Lm) / np.maximum(pf, 1e-300), np.nan)
@@ -501,8 +514,8 @@ def run_case(case, ident=None):
 
     def notch_depth(fq, Rf):
         # the share of the reference the limit channels allow (the engine's notch_allowed), at most 1
-        dd = reg_pinv(idn.H0_at(fq), FIRST_DRIVE_EPS) @ Rf
-        pred = kappa() * np.abs(idn.T0_at(fq) @ dd)
+        dd = reg_pinv(gid.H0_at(fq), FIRST_DRIVE_EPS) @ Rf
+        pred = kappa() * np.abs(gid.T0_at(fq) @ dd)
         b = case.bounds_at(fq)
         with np.errstate(divide='ignore', invalid='ignore'):
             al = np.where(pred > 0, b / pred, np.inf)
@@ -510,7 +523,7 @@ def run_case(case, ident=None):
 
     def finish_guards(d, fq):
         if p:                                       # the backstop notch: the most loaded limit channel at its bound
-            pred = kappa() * np.abs(idn.T0_at(fq) @ d)
+            pred = kappa() * np.abs(gid.T0_at(fq) @ d)
             b = case.bounds_at(fq)
             with np.errstate(divide='ignore', invalid='ignore'):
                 sc = np.where(pred > 0, b / pred, np.inf)
@@ -553,8 +566,8 @@ def run_case(case, ident=None):
         sched.settle_for(settle_s(f))
         D, why, R = call_law(True, k, f, 'engage', True)
         d = D if D is not None else D_force.copy()
-        if idn.trust_at(f):
-            bound = np.linalg.norm(reg_pinv(idn.H0_at(f), FIRST_DRIVE_EPS) @ R) * 10 ** (FIRST_DRIVE_MARGIN_DB / 20.0)
+        if gid.trust_at(f):
+            bound = np.linalg.norm(reg_pinv(gid.H0_at(f), FIRST_DRIVE_EPS) @ R) * 10 ** (FIRST_DRIVE_MARGIN_DB / 20.0)
         else:
             bound = FIRST_DRIVE_UNTRUSTED_FRACTION * np.linalg.norm(ceiling) * level()
         nd = np.linalg.norm(d)
@@ -688,7 +701,7 @@ def run_case(case, ident=None):
         f = f_next
         sta.set_bandwidth(f)
     return rec, end, dict(over_ceiling_samples=over_ceiling_samples, largest=largest, wall_s=time.perf_counter() - t_wall,
-                          ident=idn)
+                          ident=idn, guard_ident=None if guard_ident is None else gid)
 
 
 # ---------------------------------------------------------------------------------------------- the run file
@@ -772,6 +785,12 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
                                    engine_source=info['ident'].level.get('source'),
                                    file_sha256=info['ident'].level.get('file_sha256'),
                                    delay_turn_samples=info['ident'].level.get('delay_turn_samples'),
+                                   guard=None if info.get('guard_ident') is None else dict(
+                                       what='the controller\'s own identification (settle window, first drive\'s '
+                                            'bound, notch): the engine run\'s file, as --guard-ident',
+                                       file_sha256=info['guard_ident'].level.get('file_sha256'),
+                                       delay_turn_samples=info['guard_ident'].level.get('delay_turn_samples'),
+                                       lag_frames=info['guard_ident'].level.get('lag_frames')),
                                    grid_hz=[float(info['ident'].grid_hz[0]), float(info['ident'].grid_hz[-1])],
                                    lines=int(info['ident'].grid_hz.size), line_hz=IDENT_LINE_HZ),
                outcome={'class': end['cls'], 'engine_outcome': end['engine'], 'guard': end['guard'], 'channel': end['channel'],
@@ -795,14 +814,19 @@ def main(argv=None):
     ap.add_argument('--out', required=True)
     ap.add_argument('--ident', default=None, help='an engine run folder (msnb_run): build the law on its '
                     'law_identification.f8 in place of the exact small-signal response')
+    ap.add_argument('--guard-ident', default=None, help='an engine run folder (msnb_run): the controller\'s own '
+                    'identification (settle window, first drive\'s bound, notch) from its law_identification.f8, the '
+                    'law keeping --ident or the exact response (the runner\'s run of the case without --ideal-frf holds '
+                    'its measured file; with --ideal-frf the file is what the law was given)')
     a = ap.parse_args(argv)
     try:
         case = Case(os.path.abspath(a.case), os.path.abspath(a.root))
         idn = identification_from_run(case, os.path.abspath(a.ident)) if a.ident else None
+        gidn = identification_from_run(case, os.path.abspath(a.guard_ident)) if a.guard_ident else None
     except Refused as ex:
         print(f'REFUSED: {ex}', file=sys.stderr)
         return 2
-    rec, end, info = run_case(case, idn)
+    rec, end, info = run_case(case, idn, gidn)
     write_run(case, rec, end, info, a.out, a.case, sha256(os.path.abspath(__file__)))
     print(f"{case.raw['case_id']}: {end['cls']} ({end['engine']}), {len(rec)} updates, {info['wall_s']:.1f} s")
     return 0 if end['cls'] == 'completed' else 1
