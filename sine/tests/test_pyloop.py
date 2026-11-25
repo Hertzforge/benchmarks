@@ -94,6 +94,53 @@ class TestTimeLimit(unittest.TestCase):
         self.assertNotAlmostEqual(1.5 * (len(step_grid(t)) * t['step_s'] + 8.0) + 60.0, 420.51012706994237, places=3,
                                   msg='the check cannot fail')
 
+class TestSecantLevelCarry(unittest.TestCase):
+    """The shipped secant's level carry (hertzforge c54b9677, law-math secant.rs follow_level): at a level the law is
+    told, the readings and drives it holds are scaled by the level's ratio and its settle wait restarts."""
+
+    def _law(self, follow):
+        from pyloop.interface import TickIn
+        from pyloop.laws_baselines import SecantComplexGain
+        mp = json.load(open(os.path.join(DATA, 'matrix_parity.json')))
+        st, setup = parity.build(mp['lin4x4'])
+        law = SecantComplexGain(setup, follow_level=follow)
+        n, m = st.n, setup.m
+        R = np.ones(n, complex)
+
+        def x(level, C, D):
+            return TickIn(k=1, dt=setup.dt_c, f=50.0, sweep_hz_s=0.0, sweep_oct_min=0.0, level=level, R=R * level,
+                          C=C, L=np.zeros(0, complex), D_in_force=D, hold='free', notch_scale=1.0,
+                          limit_bounds=np.zeros(0), settle_open=False)
+        D0 = law.engage(x(0.5, np.zeros(n, complex), np.zeros(m, complex))).D
+        law.wait = 0
+        C = 0.4 * np.ones(n, complex)
+        law.tick(x(0.5, C, D0))                  # takes its base reading, probes
+        self.assertEqual(law.phase, 'await_probe')
+        return law, x, C, D0
+
+    def test_the_held_base_is_scaled_and_the_wait_restarts_at_a_level_move(self):
+        law, x, C, D0 = self._law(True)
+        base = tuple(v.copy() for v in law.base)
+        law.prev = (C.copy(), D0.copy(), None)   # a last control step held
+        law.wait = 2
+        full = law._settle_n(50.0)
+        law.tick(x(1.0, 2 * C, 2 * D0))         # the controller carried the drive; the law is told level 1
+        for a, b in zip(law.base, base):
+            np.testing.assert_allclose(a, 2.0 * b, rtol=1e-15)
+        np.testing.assert_allclose(law.prev[0], 2.0 * C, rtol=1e-15)
+        np.testing.assert_allclose(law.prev[1], 2.0 * D0, rtol=1e-15)
+        self.assertEqual(law.wait, max(2, full) - 1)
+        self.assertEqual(law.level, 1.0)
+
+    def test_without_the_carry_the_base_stays(self):
+        law, x, C, D0 = self._law(False)
+        base = tuple(v.copy() for v in law.base)
+        law.wait = 2
+        law.tick(x(1.0, 2 * C, 2 * D0))
+        for a, b in zip(law.base, base):
+            np.testing.assert_array_equal(a, b)
+        self.assertEqual(law.wait, 1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -318,7 +318,11 @@ classes the laws read; the loop-speed rule and the secant's settle count read th
 factor and a transport delay from the setup (the testbed's `1 / pi` and 0 when the setup gives
 none, as the shipped law math's defaults). `paired` is `PairedRef`, `ratio` `RatioPerControl`
 (pairing by reference), `steepest_descent` `SteepestDescent`, `secant` `SecantComplexGain` (carry
-factor), each at the shipped manifest's defaults (`params` `{}`; other parameters are refused).
+factor; with the shipped law's level carry, law-math `secant.rs` `follow_level` since the engine's
+c54b9677: at a level move it scales the base reading, its drive and error and the last control
+step's reading and drive by the level's ratio and restarts its settle wait; Package F, which found
+the runner's T4 `secant` drives 11 % apart from the harness's at the first level move without it),
+each at the shipped manifest's defaults (`params` `{}`; other parameters are refused).
 `matrix` is `ShippedMatrix` (`pyloop/matrix_shipped.py`): `RefMatrix` (free phase in phase) with
 the shipped law's update restated from `matrix.rs`: the reference's change carried backward from
 the reference told at the last update, the correction aimed at the reference as the trackers read

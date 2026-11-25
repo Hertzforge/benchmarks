@@ -112,6 +112,12 @@ class SecantComplexGain(Law):
     0.1 dB) the cycle holds instead of probing (testbed choice: a probe on a noise-sized error
     gives a noise gain and a noise secant).
 
+    A level change (the shipped law since hertzforge c54b9677, law-math `secant.rs` `follow_level`): the controller
+    scales the drive in force by the level's ratio and tells the law the new level; the law scales the readings and
+    drives it holds (the base reading, its drive and error, the last control step's reading and drive) by the same
+    ratio and restarts its settle wait (the larger of the wait left and a full one), so its probe, gain and secant pair
+    are read against the drive as it is now. `follow_level=False` leaves it out (the testbed's law, as at a6327de).
+
     carry: how Z moves from one sweep frequency to the next, which the patent does not say.
       'factor' (testbed default): Z(f) = M Z0(f), the secant updates acting on the drive-side factor
                M (m by m, starting at I): Z_{k+1} = (I + u S^H) Z_k gives M_{k+1} = (I + u S^H) M_k.
@@ -122,9 +128,10 @@ class SecantComplexGain(Law):
     values = ('a_re', 'a_im', 'c', 'phase', 'err_db', 'secant_skipped')
 
     def __init__(self, setup, c0=0.1, c_max=1.0, carry='factor', settle=None, eps=1e-3, a_band=0.3, tol=0.0116,
-                 settle_factor=5.0):
+                 settle_factor=5.0, follow_level=True):
         super().__init__(setup, c0=c0, c_max=c_max, carry=carry, settle=settle, eps=eps, tol=tol,
-                         settle_factor=settle_factor)
+                         settle_factor=settle_factor, follow_level=follow_level)
+        self.follow_level, self.level, self.base = follow_level, 0.0, None
         self.tol, self.settle_factor = tol, settle_factor
         self.c0, self.c_max, self.carry, self.eps, self.a_band = c0, c_max, carry, eps, a_band
         self.settle = settle
@@ -154,7 +161,20 @@ class SecantComplexGain(Law):
                                       err_db=float(np.max(np.abs(_db(x.C) - _db(x.R)))) if np.any(x.C) else 0.0,
                                       secant_skipped=float(self.skipped)))
 
+    def _follow_level(self, x):
+        if not self.follow_level or not (x.level > 0.0 and self.level > 0.0) or x.level == self.level:
+            return
+        r = x.level / self.level
+        self.level = x.level
+        if self.base is not None:
+            self.base = tuple(v * r for v in self.base)
+        if self.prev is not None:
+            c0, d0, zs = self.prev
+            self.prev = (c0 * r, d0 * r, zs)
+        self.wait = max(self.wait, self._settle_n(x.f))
+
     def engage(self, x):
+        self.level = x.level
         Z0 = reg_pinv(self.setup.ident.H0_at(x.f), self.eps)
         self.Zp = Z0.copy()
         self.prev = None                      # (C before the control step, D before it, Z used) for the secant
@@ -163,6 +183,7 @@ class SecantComplexGain(Law):
         return self._out(Z0 @ x.R, x)
 
     def tick(self, x):
+        self._follow_level(x)
         if self.wait > 0:                     # hold the drive while the filters settle
             self.wait -= 1
             return self._out(x.D_in_force, x)
