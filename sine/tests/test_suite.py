@@ -236,6 +236,26 @@ class TestScorer(unittest.TestCase):
         self.assertLess(a['share_inside'], 0.99)
         self.assertTrue(600 < a['at_hz'] < 700)
 
+    def test_a_run_that_never_started_is_carded_unscored(self):
+        # FORMAT_RUN.md: a run the coherence gate held (or the engine refused) has an outcome and no history; the study
+        # met 50 such runs on 2026-11-26 and the frozen scorer stopped on them with KeyError 'history'
+        d = tempfile.mkdtemp(dir=TMP)
+        synth.make_run(P(), 'T1', d)
+        path = os.path.join(d, 'run.json')
+        r = json.load(open(path))
+        r.pop('history')
+        r['outcome'] = dict(r.get('outcome') or {}, **{'class': 'held_by_identification',
+                                                       'message': "the identification's coherence was under the gate"})
+        json.dump(r, open(path, 'w'))
+        c = sc.score(P(), d)
+        self.assertFalse(c['scored'])
+        self.assertEqual(c['completion']['outcome'], 'held_by_identification')
+        self.assertEqual(c['completion']['coverage'], 0.0)
+        self.assertEqual(c['completion']['judged_updates'], 0)
+        self.assertIsNone(c['drive'])
+        self.assertIn('never started', c['why'])
+        self.assertEqual(c['problem']['test'], 'T1')
+
     def test_reads_a_whole_bin_row_given_as_null(self):
         # the runner writes a bin with no judged update as null for the whole row, not as a row of nulls: both forms
         # must read the same

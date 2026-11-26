@@ -598,8 +598,35 @@ def version_of(raw):
     return None
 
 
+def unstarted_card(pr, path, raw, test_id):
+    """A run with no history (FORMAT_RUN.md: the coherence gate held it, or the engine refused it) never started: it is
+    carded unscored, with no coverage, so every law that met the same held identification reads alike."""
+    o = raw.get('outcome') or {}
+    case_id = raw.get('case_id', '')
+    if test_id is None:
+        test_id = case_id.split('__')[1]
+    card = dict(schema=CARD_SCHEMA, scorer=dict(file='sine_scorer.py', version=SCORER_VERSION, sha256=sha256(os.path.abspath(__file__))),
+                problem=dict(id=pr.meta['structure']['id'], seed=pr.meta['structure']['seed'], stage=pr.meta['stage'],
+                             effects=pr.meta['effects'], structure_sha256=pr.meta['structure']['sha256'], test=test_id),
+                run=dict(case_id=case_id, case_sha256=raw.get('case_sha256'), code_commit=raw.get('code_commit'),
+                         runner_sha256=raw.get('runner_sha256'), run_sha256=sha256(path), version=version_of(raw)))
+    card['completion'] = dict(outcome=o.get('class'), engine_outcome=o.get('engine_outcome'), guard=o.get('guard'),
+                              channel=o.get('channel'), at_hz=o.get('frequency_hz'), at_s=o.get('time_s'),
+                              at_level_db=o.get('level_db'), message=o.get('message'), coverage=0.0,
+                              coverage_what='no history: the run never started', ladder_share=0.0, judged_updates=0,
+                              updates=0, run_seconds=0.0)
+    card['drive'] = None
+    card['scored'] = False
+    card['why'] = f"the run never started ({o.get('class')}: {o.get('message')})"
+    return card
+
+
 def score(problem_folder, run_path, test_id=None):
     pr = Problem(problem_folder)
+    path = os.path.join(run_path, 'run.json') if os.path.isdir(run_path) else run_path
+    raw = json.load(open(path))
+    if 'history' not in raw:
+        return unstarted_card(pr, path, raw, test_id)
     run = read_run(run_path, pr.st)
     run_path = run.path
     if test_id is None:
