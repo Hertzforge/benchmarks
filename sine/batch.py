@@ -117,7 +117,7 @@ class Batch:
             code, err = None, f'timed out after {a.job_timeout:g} s'
         t_run = time.time() - t0
         info = dict(schema='hertzforge-benchmark-sine-batch-job/0.1-draft', batch=a.name, case_id=cid,
-                    case_file=(f"{os.path.basename(a.cases)}/{j['problem']}/{j['test']}__{j['law']}.json" if a.cases
+                    case_file=(os.path.relpath(case, os.path.dirname(os.path.dirname(a.cases))) if a.cases
                                else f"{j['problem']}/cases/{j['test']}__{j['law']}.json"), case_sha256=sha256(case),
                     code_sha256=self.code, runner_sha256=self.runner_sha, runner_exit=code, run_s=round(t_run, 3),
                     started=time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(t0)))

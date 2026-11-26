@@ -415,7 +415,7 @@ class TestBatch(unittest.TestCase):
         info = json.load(open(os.path.join(out, 'b3', LIN, 'T1__matrix', 'batch.json')))
         self.assertEqual(info['case_sha256'], batch.sha256(os.path.join(cases, LIN, 'T1__matrix.json')))
         self.assertNotEqual(info['case_sha256'], batch.sha256(os.path.join(TMP, 'problems', LIN, 'cases', 'T1__matrix.json')))
-        self.assertEqual(info['case_file'], f'record/{LIN}/T1__matrix.json')
+        self.assertEqual(info['case_file'], f'{os.path.basename(out)}/record/{LIN}/T1__matrix.json')
 
     def test_free_disk_stop(self):
         out, log = self.run_batch('b2', min_free_gb=1e12)

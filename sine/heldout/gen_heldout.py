@@ -43,8 +43,11 @@ def stamp():
     return time.strftime('%Y-%m-%d %H:%M:%S')
 
 
-def env_for(root):
+def env_for(root, threads=None):
     e = dict(os.environ, OBS_GEN_BULK=os.path.join(root, 'exports'), PYTHONDONTWRITEBYTECODE='1')
+    if threads:
+        for v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS'):
+            e[v] = str(threads)
     return e
 
 
@@ -125,6 +128,15 @@ def cmd_export(a):
                        capture_output=True, text=True, env=env_for(a.root))
     if p.returncode != 0:
         raise SystemExit(f'w_table failed: {p.stderr[-600:]}')
+    def done(job):
+        s, ns, nc, v = job
+        name = f's{s}_{ns}x{nc}_{v}'
+        return (os.path.exists(os.path.join(a.root, 'exports', 'plants', name, 'meta_v2.json')) and
+                os.path.exists(os.path.join(a.root, 'exports', 'cases_v2', f'{name}_pinv_closed_default_line_hold_divopen.json')))
+    already = [j for j in js if a.resume and done(j)]
+    if a.resume:
+        log(a.root, f'EXPORT RESUME: {len(already)} of {len(js)} already exported (meta and case written), {len(js) - len(already)} to export')
+    all_js, js = js, [j for j in js if j not in already]
     log(a.root, f'EXPORT START: {len(js)} structures of seeds {seeds}, {a.jobs} at once')
 
     def one(job):
@@ -140,7 +152,9 @@ def cmd_export(a):
                 ok += 1; log(a.root, f'exported s{s}_{ns}x{nc}_{v}')
             else:
                 bad += 1; log(a.root, f'EXPORT REFUSED s{s}_{ns}x{nc}_{v}: ' + ' '.join(tail.split())[-400:])
-    log(a.root, f'EXPORT END: {ok} exported, {bad} refused, of {len(js)}')
+    if a.resume:
+        ok += len(already)
+    log(a.root, f'EXPORT END: {ok} exported, {bad} refused, of {len(all_js)}')
 
 
 def cmd_stage(a):
@@ -150,7 +164,7 @@ def cmd_stage(a):
     log(a.root, f'STAGE START: seeds {seeds} into {out}, {a.jobs} at once')
     with open(os.path.join(a.root, 'stage2.out'), 'w') as fh:
         p = subprocess.run([sys.executable, os.path.join(GEN, 'stage2.py'), '--seeds', ','.join(map(str, seeds)), '--out', out,
-                            '--jobs', str(a.jobs)], stdout=fh, stderr=subprocess.STDOUT, env=env_for(a.root))
+                            '--jobs', str(a.jobs)], stdout=fh, stderr=subprocess.STDOUT, env=env_for(a.root, threads=1))
     summ = json.load(open(os.path.join(out, 'stage2_summary.json')))
     rows = summ['rows']
     failed = [r for r in rows if 'failed' in r]
@@ -232,6 +246,7 @@ def main():
     ap.add_argument('--root', required=True)
     ap.add_argument('--jobs', type=int, default=3)
     ap.add_argument('--workers', type=int, default=3)
+    ap.add_argument('--resume', action='store_true', help='export: skip the structures already exported')
     a = ap.parse_args()
     a.root = os.path.abspath(a.root)
     os.makedirs(a.root, exist_ok=True)
