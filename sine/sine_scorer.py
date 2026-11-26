@@ -133,6 +133,16 @@ def _cx(h, key):
     return np.asarray(h[key + '_re'], float) + 1j * np.asarray(h[key + '_im'], float)
 
 
+def _own_or(v, own):
+    """A thinned file's per-point extremes, null where the point stands for one update (FORMAT_RUN.md, "Thinning"):
+    the point's own values there."""
+    out = np.array(own, float, copy=True)
+    for p, row in enumerate(v):
+        if row is not None:
+            out[p] = row
+    return out
+
+
 def _num(v):
     """A list that may hold nulls, as floats with NaN for null. A per-point list of rows may give a whole row as null
     (the runner's bin_error_db_min/_max where a bin has no judged update, FORMAT_RUN.md): that row is NaN across."""
@@ -175,7 +185,12 @@ def read_run(path, st=None):
     r.Lb = _num(h.get('limit_bound'))
     r.bin_min = _num(h.get('bin_error_db_min'))
     r.bin_max = _num(h.get('bin_error_db_max'))
+    # a thinned stepped sine or dwell (FORMAT_RUN.md, "Thinning"): every judged update is a point of its own; the
+    # others are spans, read through their counts and their drive and mode extremes
+    r.thinned_steps = h.get('decimation') == 'every judged update'
+    r.updates = int(np.sum(h['bin_updates'])) if r.thinned_steps else int(r.t.size)
     r.mode_hz = r.mode_zeta = None
+    r.mode_hz_min = r.mode_hz_max = None
     r.modes_followed = []
     tm = raw.get('true_modes') or {}
     if st is not None:
@@ -188,8 +203,23 @@ def read_run(path, st=None):
                 fn[:, i] = F[:, k]
                 ze[:, i] = sm.zeta_from_frequency(st, i, F[:, k])
                 r.modes_followed.append(i)
+            if r.thinned_steps and tm.get('frequency_hz_min') is not None:
+                lo_, hi_ = fn.copy(), fn.copy()
+                Fl, Fh = _own_or(tm['frequency_hz_min'], F), _own_or(tm['frequency_hz_max'], F)
+                for k, m in enumerate(tm['modes']):
+                    lo_[:, int(m['index'])], hi_[:, int(m['index'])] = Fl[:, k], Fh[:, k]
+                r.mode_hz_min, r.mode_hz_max = lo_, hi_
         r.mode_hz, r.mode_zeta = fn, ze
     return r
+
+
+def drive_extremes(run, a, nrm):
+    """Each point's largest drive and norm over the updates it stands for: a thinned step or dwell's span extremes, a
+    point standing for one update (null there) its own."""
+    h = run.raw['history']
+    if not run.thinned_steps or h.get('bin_drive_vpk_max') is None:
+        return a, nrm
+    return _own_or(h['bin_drive_vpk_max'], a), _own_or(h['bin_drive_norm_max'], nrm)
 
 
 def estimated_response(st, run, rows):
@@ -490,7 +520,7 @@ def completion_reading(pr, run, mask, test):
         what = 'judged seconds over the dwell\'s seconds after its settle window'
     return dict(outcome=o.get('class'), engine_outcome=o.get('engine_outcome'), guard=o.get('guard'), channel=o.get('channel'),
                 at_hz=o.get('frequency_hz'), at_s=o.get('time_s'), at_level_db=o.get('level_db'), message=o.get('message'),
-                coverage=cov, coverage_what=what, ladder_share=ladder_share, judged_updates=int(mask.sum()), updates=int(run.t.size),
+                coverage=cov, coverage_what=what, ladder_share=ladder_share, judged_updates=int(mask.sum()), updates=run.updates,
                 run_seconds=float(run.t[-1] - run.t[0]) if run.t.size > 1 else 0.0)
 
 
@@ -498,6 +528,7 @@ def drive_reading(pr, run, mask):
     D = run.D_engine
     nrm = np.linalg.norm(D, axis=1)
     a = np.abs(D)
+    a, nrm = drive_extremes(run, a, nrm)
     k, j = np.unravel_index(int(np.argmax(a)), a.shape)
     summ = run.raw.get('summary') or {}
     out = dict(norm_max_v=float(nrm.max()), largest_drive_v=float(a[k, j]), largest_drive=int(j), largest_at_hz=float(run.f[k]),
@@ -532,9 +563,16 @@ def state_reading(pr, run):
         out['as_tested'] = None
         out['why'] = 'the run follows no article mode (true_modes)'
         return out
-    ch = run.mode_hz[:, am] / st.f_hz[am] - 1.0
-    k = np.argmax(np.abs(ch), axis=0)
-    signed = ch[k, np.arange(am.size)]
+    if run.mode_hz_min is not None:
+        # a thinned step or dwell: each mode's extremes over every update (ties of opposite sign go to the larger rise,
+        # where the whole history would take the earlier)
+        lo_ = (run.mode_hz_min[:, am] / st.f_hz[am] - 1.0).min(0)
+        hi_ = (run.mode_hz_max[:, am] / st.f_hz[am] - 1.0).max(0)
+        signed = np.where(np.abs(lo_) > np.abs(hi_), lo_, hi_)
+    else:
+        ch = run.mode_hz[:, am] / st.f_hz[am] - 1.0
+        k = np.argmax(np.abs(ch), axis=0)
+        signed = ch[k, np.arange(am.size)]
     out['as_tested'] = dict(change_p10_p50_p90=[float(x) for x in np.percentile(signed, [10, 50, 90])],
                             median_abs_change=float(np.median(np.abs(signed))), largest_drop=float(signed.min()),
                             largest_rise=float(signed.max()), modes=int(am.size),
@@ -550,6 +588,16 @@ def _subset(run, mask):
     return r
 
 
+def version_of(raw):
+    """Which version wrote the run (Plan section 9): 'python' (the suite's harness, options.harness), 'hertzforge' (the
+    runner on the shipped engine, producer.program msnb_run), else None."""
+    if (raw.get('options') or {}).get('harness') == 'python':
+        return 'python'
+    if (raw.get('producer') or {}).get('program') == 'msnb_run':
+        return 'hertzforge'
+    return None
+
+
 def score(problem_folder, run_path, test_id=None):
     pr = Problem(problem_folder)
     run = read_run(run_path, pr.st)
@@ -562,7 +610,7 @@ def score(problem_folder, run_path, test_id=None):
                 problem=dict(id=pr.meta['structure']['id'], seed=pr.meta['structure']['seed'], stage=pr.meta['stage'],
                              effects=pr.meta['effects'], structure_sha256=pr.meta['structure']['sha256'], test=test_id),
                 run=dict(case_id=run.case_id, case_sha256=run.raw.get('case_sha256'), code_commit=run.raw.get('code_commit'),
-                         runner_sha256=run.raw.get('runner_sha256'), run_sha256=sha256(run_path)))
+                         runner_sha256=run.raw.get('runner_sha256'), run_sha256=sha256(run_path), version=version_of(run.raw)))
     card['completion'] = completion_reading(pr, run, mask, test)
     card['drive'] = drive_reading(pr, run, mask)
     if not mask.any():
@@ -577,9 +625,11 @@ def score(problem_folder, run_path, test_id=None):
     if run.Rrun is not None:
         card['run_reference_vs_problem_db_max'] = float(np.max(np.abs(db20(run.Rrun[mask], R))))
     wm = w[mask]
+    # a sweep's bins hold updates between its points; a step's or a dwell's judged updates are points of their own
+    between = test['kind'] == 'sweep' and run.bin_max is not None
     card['amplitude'] = amplitude_reading(pr, f, C, R, wm, pr.names_c,
-                                          None if run.bin_min is None else run.bin_min[mask],
-                                          None if run.bin_max is None else run.bin_max[mask])
+                                          run.bin_min[mask] if between else None,
+                                          run.bin_max[mask] if between else None)
     card['phase'] = phase_reading(f, C, R, wm, pr.names_c)
     Yh = pr.ideal_at(f)[1]
     Hh = estimated_response(pr.st, _subset(run, mask), list(pr.i_h)) if pr.i_h.size else None

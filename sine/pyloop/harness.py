@@ -947,12 +947,22 @@ def _rows(a):
     return [[None if not np.isfinite(x) else float(x) for x in row] for row in np.asarray(a, float)]
 
 
-def decimate(case, rec):
-    """The runner's history points: a sweep's first update of each 1/48-octave bin (from the band's low edge) at each
-    level, with the bin's counts and error extremes over its judged updates; every update otherwise. The last update
-    is always a point."""
+def decimate(case, rec, whole_history=False):
+    """The runner's history points (its FORMAT_RUN.md, "Thinning"): a sweep's first update of each 1/48-octave bin (from
+    the band's low edge) at each level, with the bin's counts and error extremes over its judged updates, the last
+    update always a point. A stepped sine or a dwell keeps every judged update, standing for itself, and of the others
+    the first and the last of each run of consecutive updates with the same key (level to 1e-6 dB, frequency, settle
+    window, miss); with `whole_history`, every update."""
     if case.test['type'] != 'sweep':
-        return list(range(len(rec))), None
+        n = len(rec)
+        if whole_history:
+            return list(range(n)), None
+        key = [(int(round(r['level'] * 1e6)), r['f'], r['settling'], r['miss']) for r in rec]
+
+        def same(i, j):
+            return not rec[i]['judged'] and not rec[j]['judged'] and key[i] == key[j]
+        pts = [i for i in range(n) if i == 0 or i + 1 == n or not same(i - 1, i) or not same(i, i + 1)]
+        return pts, [list(range(a, b)) for a, b in zip(pts, pts[1:] + [n])]
     lo = case.test['band_hz'][0]
     keys = [(int(np.floor(48.0 * np.log2(r['f'] / lo) + 1e-9)), r['level']) for r in rec]
     pts, groups = [], []
@@ -969,11 +979,13 @@ def decimate(case, rec):
     return pts, groups
 
 
-def write_run(case, rec, end, info, out, case_path, runner_sha):
-    pts, groups = decimate(case, rec)
+def write_run(case, rec, end, info, out, case_path, runner_sha, whole_history=False):
+    pts, groups = decimate(case, rec, whole_history)
     P = [rec[i] for i in pts]
     n = len(case.controls)
-    h = dict(decimation='1/48 octave' if groups is not None else 'every update', points=len(P),
+    sweep = case.test['type'] == 'sweep'
+    h = dict(decimation='1/48 octave' if sweep else 'every update' if groups is None else 'every judged update',
+             points=len(P),
              index=[r['index'] for r in P], time_s=[float(r['t']) for r in P], frequency_hz=[float(r['f']) for r in P],
              level_db=[float(r['level']) for r in P], judged=[r['judged'] for r in P], settling=[r['settling'] for r in P],
              miss=[r['miss'] for r in P])
@@ -987,23 +999,34 @@ def write_run(case, rec, end, info, out, case_path, runner_sha):
     if groups is not None:
         h['bin_updates'] = [len(g) for g in groups]
         h['bin_judged'] = [int(sum(rec[i]['judged'] for i in g)) for g in groups]
+    if groups is not None and sweep:
         mn, mx = [], []
         for g in groups:
             e = np.array([rec[i]['err'] for i in g if rec[i]['judged']]).reshape(-1, n)
             mn.append([None] * n if e.size == 0 else [float(x) for x in e.min(0)])
             mx.append([None] * n if e.size == 0 else [float(x) for x in e.max(0)])
         h['bin_error_db_min'], h['bin_error_db_max'] = mn, mx
+    if groups is not None and not sweep:
+        # the drive's extremes over the updates a point stands for; null where it stands for itself alone
+        h['bin_drive_vpk_max'] = [None if len(g) == 1 else [float(x) for x in np.max(np.abs(np.array([rec[i]['D'] for i in g])), 0)]
+                                  for g in groups]
+        h['bin_drive_norm_max'] = [None if len(g) == 1 else float(np.max(np.linalg.norm(np.array([rec[i]['D'] for i in g]), axis=1)))
+                                   for g in groups]
     st = case.st
     lo, hi = case.ident_band
     fol = np.flatnonzero((st.f_hz >= lo) & (st.f_hz <= hi)) if st.rules is not None else np.zeros(0, int)
     tm = dict(tracked=bool(st.rules is not None), modes=[dict(index=int(i), f0_hz=float(st.f_hz[i])) for i in fol],
               frequency_hz=[[float(r['modes'][i]) for i in fol] for r in P] if fol.size else [],
               resolution_samples=case.tick_n)
+    if groups is not None and not sweep and fol.size:
+        # each followed mode's extremes over the updates a point stands for; null where it stands for itself alone
+        tm['frequency_hz_min'] = [None if len(g) == 1 else [float(min(rec[i]['modes'][k] for i in g)) for k in fol] for g in groups]
+        tm['frequency_hz_max'] = [None if len(g) == 1 else [float(max(rec[i]['modes'][k] for i in g)) for k in fol] for g in groups]
     judged = sum(r['judged'] for r in rec)
     run = dict(schema=RUN_SCHEMA, case_id=case.raw['case_id'], case_sha256=case.sha256, runner_sha256=runner_sha,
                code_commit=None, runner='the MIMO Sine suite\'s Python harness (sine/pyloop/harness.py)',
                options=dict(ideal_frf=info['ident'].level.get('source') in (None, 'ideal_frf'), record=False,
-                            harness='python', pipeline=info.get('pipeline') is not None),
+                            harness='python', pipeline=info.get('pipeline') is not None, whole_history=bool(whole_history)),
                structure=dict(file=case.raw['structure']['file'], sha256=case.raw['structure']['sha256'],
                               controls=case.raw['controls'], limits=case.limit_names, drives=case.drive_names,
                               n_modes=int(st.n_modes), fs_hz=case.fs, tick_s=case.dt, tick_frames=case.tick_n),
@@ -1055,6 +1078,8 @@ def main(argv=None):
     ap.add_argument('--no-pipeline', action='store_true', help='leave the runner\'s pipeline out (the harness as at '
                     'd11f453): the drive reaches the structure at the next tick, demodulated against its own phase, the '
                     'law told no transport delay')
+    ap.add_argument('--whole-history', action='store_true', help='a stepped sine or a dwell keeps every update (the '
+                    'runner\'s --whole-history; FORMAT_RUN.md, "Thinning")')
     a = ap.parse_args(argv)
     try:
         case = Case(os.path.abspath(a.case), os.path.abspath(a.root))
@@ -1068,7 +1093,7 @@ def main(argv=None):
     except Refused as ex:
         print(f'REFUSED: {ex}', file=sys.stderr)
         return 2
-    write_run(case, rec, end, info, a.out, a.case, sha256(os.path.abspath(__file__)))
+    write_run(case, rec, end, info, a.out, a.case, sha256(os.path.abspath(__file__)), a.whole_history)
     print(f"{case.raw['case_id']}: {end['cls']} ({end['engine']}), {len(rec)} updates, {info['wall_s']:.1f} s")
     return 0 if end['cls'] == 'completed' else 1
 

@@ -2,6 +2,7 @@
 
 Needs the MIMO Random v0.2 problems: set MSNB_RANDOM_PROBLEMS to the folder holding them (the tests that need them
 are skipped otherwise). Every check here is shown to fail on a case built to break it."""
+import argparse
 import contextlib
 import hashlib
 import io
@@ -10,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 
 import numpy as np
@@ -64,6 +66,14 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(len(plan.limit_structures()), 40)
         self.assertEqual(len(set(plan.structures())), 380)
         self.assertEqual(len(plan.jobs()[0]), 300 * 11 + 80 * 10 + 40)
+        # the Python version: K3 and matrix on T1, T2 (380 structures), T5 (block A, 300) and L1 (the limit block, 40)
+        py = plan.jobs(version='python')[0]
+        self.assertEqual(len(py), 2 * (380 + 380 + 300 + 40))
+        self.assertEqual({(j['problem'], j['test']) for j in py if j['law'] == 'k3'},
+                         {(j['problem'], j['test']) for j in py if j['law'] == 'matrix'})
+        self.assertFalse({j['test'] for j in py} & {'T3', 'T4'})
+        hf = plan.jobs()[0]
+        self.assertNotIn('k3', {j['law'] for j in hf})
 
     def test_no_held_back_seed(self):
         seeds = {int(s.rsplit('_s', 1)[1]) for s in plan.structures()}
@@ -395,6 +405,32 @@ class TestBatch(unittest.TestCase):
         log = open(os.path.join(out, 'b1', 'batch.log')).read().splitlines()
         self.assertTrue(log[-1].endswith('BATCH END b1: 2 done, 0 failed, 3 skipped'), log[-1])
 
+    def test_a_run_s_processor_time_and_memory_are_recorded(self):
+        os.environ['FAKE_SPIN'] = f'{LIN}__T1__matrix'
+        try:
+            out, log = self.run_batch('b_use', tests='T1,T2')
+        finally:
+            del os.environ['FAKE_SPIN']
+        spun = json.load(open(os.path.join(out, 'b_use', LIN, 'T1__matrix', 'batch.json')))
+        plain = json.load(open(os.path.join(out, 'b_use', LIN, 'T2__matrix', 'batch.json')))
+        self.assertGreaterEqual(spun['user_s'] + spun['sys_s'], 0.5)
+        self.assertLess(plain['user_s'] + plain['sys_s'], spun['user_s'] + spun['sys_s'] - 0.3)
+        self.assertGreater(spun['max_rss_bytes'], 5e6)
+        self.assertLess(spun['max_rss_bytes'], 5e9)
+
+    def test_a_run_past_its_time_is_stopped(self):
+        os.environ['FAKE_HANG'] = f'{LIN}__T1__matrix'
+        t0 = time.time()
+        try:
+            out, log = self.run_batch('b_hang', tests='T1', job_timeout=2)
+        finally:
+            del os.environ['FAKE_HANG']
+        self.assertLess(time.time() - t0, 30)
+        info = json.load(open(os.path.join(out, 'b_hang', LIN, 'T1__matrix', 'batch.json')))
+        self.assertEqual(info['failed'], 'timed out after 2 s')
+        self.assertIsNone(info['runner_exit'])
+        self.assertTrue(log[-1].endswith('BATCH END b_hang: 0 done, 1 failed, 0 skipped'), log[-1])
+
     def test_case_set_and_job_list(self):
         out = tempfile.mkdtemp(dir=TMP)
         cases = os.path.join(out, 'record')
@@ -421,6 +457,68 @@ class TestBatch(unittest.TestCase):
         out, log = self.run_batch('b2', min_free_gb=1e12)
         self.assertTrue(any('BATCH STOP b2: free disk' in x for x in log))
         self.assertTrue(log[-1].endswith('BATCH END b2: 0 done, 0 failed, 5 skipped'), log[-1])
+
+    def test_free_disk_is_read_on_root_too(self):
+        real = batch.shutil.disk_usage
+
+        def fake(path):
+            u = real(path)
+            return u._replace(free=10 * 10 ** 9) if os.path.abspath(path) == '/' else u._replace(free=10 ** 15)
+        batch.shutil.disk_usage = fake
+        try:
+            self.assertAlmostEqual(batch.free_gb(TMP), 10.0)
+            out, log = self.run_batch('b4', min_free_gb=50)
+        finally:
+            batch.shutil.disk_usage = real
+        self.assertTrue(any('BATCH STOP b4: free disk 10.0 GB under 50 GB' in x for x in log), log)
+
+    def test_workers_setting(self):
+        self.assertEqual((batch.DEFAULT_WORKERS, batch.MAX_WORKERS, batch.BIG_SYSTEMS, batch.BIG_AT_ONCE),
+                         (16, 18, ('24x12',), 4))
+        out, log = self.run_batch('b5', workers=40)
+        self.assertIn('BATCH START b5: 5 jobs, 18 workers, at most 4 on 24x12 at once', log[0])
+
+    def test_interleave(self):
+        jobs = [dict(problem=f'frame-12x6_s{i:02d}', test='T1', law='matrix') for i in range(80)]
+        jobs += [dict(problem=f'frame-24x12_s{i:02d}', test='T1', law='matrix') for i in range(20)]
+        out = batch.interleave(jobs, lambda j: batch.system_of(j['problem']) == '24x12')
+        self.assertEqual(sorted(map(str, out)), sorted(map(str, jobs)))
+        pos = [i for i, j in enumerate(out) if '24x12' in j['problem']]
+        self.assertLessEqual(max(np.diff(pos)), 6)                         # one in five, evenly
+        self.assertGreaterEqual(min(np.diff(pos)), 4)
+        self.assertLessEqual(pos[0], 5)
+        self.assertGreaterEqual(pos[-1], 90)
+        self.assertEqual([j for j in out if '24x12' in j['problem']], jobs[80:])      # each group keeps its order
+        self.assertEqual([j for j in out if '24x12' not in j['problem']], jobs[:80])
+
+    def test_at_most_four_big_at_once(self):
+        import threading
+        import time as _t
+        a = argparse.Namespace(out=tempfile.mkdtemp(dir=TMP), name='b6', runner=os.path.join(HERE, 'fake_runner.py'),
+                               workers=10, big_systems='24x12', big_at_once=4)
+        b = batch.Batch(a)
+        lock, now, most, ran = threading.Lock(), [0], [0], []
+
+        def job(j):
+            big = '24x12' in j['problem']
+            with lock:
+                ran.append(j['problem'])
+                if big:
+                    now[0] += 1
+                    most[0] = max(most[0], now[0])
+            _t.sleep(0.05 if big else 0.005)
+            if big:
+                with lock:
+                    now[0] -= 1
+        b.job = job
+        jobs = [dict(problem=f'frame-24x12_s{i:02d}', test='T1', law='matrix') for i in range(12)]
+        jobs += [dict(problem=f'frame-6x6_s{i:02d}', test='T1', law='matrix') for i in range(30)]
+        b.run(jobs)
+        self.assertEqual(b.order, batch.interleave(jobs, b.is_big))       # run() spreads the big jobs
+        self.assertNotEqual(b.order, jobs)
+        self.assertEqual(sorted(ran), sorted(j['problem'] for j in jobs))
+        self.assertEqual(most[0], 4)
+        self.assertEqual(b.most_big_at_once, 4)
 
 
 # ------------------------------------------------------------------------------------------------ publication
@@ -466,6 +564,69 @@ class TestPublication(unittest.TestCase):
         n, found = pub.run([SINE])
         self.assertEqual(found, [])
 
+
+
+# ------------------------------------------------------------------------------------------------ the launchd wrapper
+class TestBatchAgent(unittest.TestCase):
+    def setUp(self):
+        import batch_agent
+        self.ba = batch_agent
+        self.d = tempfile.mkdtemp(prefix='msnb-agent-test-')
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.sets = os.path.join(self.d, 'sets.json')
+        json.dump(dict(sets=[dict(name='study_x', problems='/p', cases='/c', jobs_file='/j.json')]), open(self.sets, 'w'))
+        self.runner = os.path.join(self.d, 'runner')
+        open(self.runner, 'w').write('')
+
+    def args(self, *extra):
+        return ['--sets', self.sets, '--set', 'study_x', '--runner', self.runner, '--out', self.d] + list(extra)
+
+    def test_the_plist(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.ba.main(['plist'] + self.args())
+        import plistlib
+        pl = plistlib.load(open(os.path.join(self.d, 'study_x', 'hf.msnb.study_x.plist'), 'rb'))
+        self.assertEqual(pl['ProcessType'], 'Interactive')
+        prog = pl['ProgramArguments']
+        self.assertEqual(prog[prog.index('--workers') + 1], '16')
+        self.assertEqual(prog[prog.index('--min-free-gb') + 1], '50')
+        self.assertEqual(prog[prog.index('--jobs') + 1], '/j.json')
+        for k in ('VECLIB_MAXIMUM_THREADS', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS'):
+            self.assertEqual(pl['EnvironmentVariables'][k], '1')
+
+    def test_a_network_folder_is_refused(self):
+        orig = self.ba.fs_type
+        self.ba.fs_type = lambda path: 'smbfs' if os.path.realpath(path).startswith(os.path.realpath(self.d)) else 'apfs'
+        try:
+            with self.assertRaises(SystemExit) as e:
+                self.ba.cmd_start(self.ba.argparse.Namespace(sets=self.sets, set='study_x', runner=self.runner, out=self.d,
+                                                            workers=16, jobs=None, label=None))
+            self.assertIn('network file system', str(e.exception))
+        finally:
+            self.ba.fs_type = orig
+
+    def test_under_fifty_gb_free_is_refused(self):
+        orig_fs, orig_du = self.ba.fs_type, self.ba.shutil.disk_usage
+        self.ba.fs_type = lambda path: 'apfs'
+        self.ba.shutil.disk_usage = lambda p: orig_du(p)._replace(free=int(49.9e9))
+        try:
+            with self.assertRaises(SystemExit) as e:
+                self.ba.cmd_start(self.ba.argparse.Namespace(sets=self.sets, set='study_x', runner=self.runner, out=self.d,
+                                                            workers=16, jobs=None, label=None))
+            self.assertIn('under 50 GB', str(e.exception))
+        finally:
+            self.ba.fs_type, self.ba.shutil.disk_usage = orig_fs, orig_du
+
+    def test_the_mount_of_a_path(self):
+        table = ('/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n'
+                 '/dev/disk3s5 on /srv/data (apfs, local, journaled, nobrowse)\n'
+                 '//u@10.0.0.2/home on /srv/data/net/share (smbfs, nodev, nosuid, mounted by u)\n')
+        self.assertEqual(self.ba.fs_type('/srv/data/net/share/a/b', table), 'smbfs')
+        self.assertEqual(self.ba.fs_type('/srv/data/net/share', table), 'smbfs')
+        self.assertEqual(self.ba.fs_type('/srv/data/net/shared', table), 'apfs')
+        self.assertEqual(self.ba.fs_type('/usr/bin', table), 'apfs')
+        self.assertEqual(self.ba.fs_type('/'), self.ba.fs_type(os.path.join('/', 'nonexistent_x', 'y')))
+        self.assertNotIn(self.ba.fs_type(self.d), self.ba.NETWORK_FS)
 
 
 # ------------------------------------------------------------------------------------------------ the Python harness

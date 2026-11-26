@@ -24,8 +24,8 @@ def sid(system, kind, seed):
     return f'frame-{system}' + ('' if tier == 'linear' else f'-{tier}') + (f'_{eff}' if eff else '') + f'_s{seed:02d}'
 
 
-def row(system, kind, seed, test, law, scored=True, exc=-1.0, **vals):
-    r = dict(structure=sid(system, kind, seed), system=system, kind=kind, seed=seed, test=test, law=law,
+def row(system, kind, seed, test, law, scored=True, exc=-1.0, version='hertzforge', **vals):
+    r = dict(version=version, structure=sid(system, kind, seed), system=system, kind=kind, seed=seed, test=test, law=law,
              outcome='completed', scored=int(scored))
     r.update(BASE)
     r.update(vals)
@@ -37,13 +37,14 @@ def row(system, kind, seed, test, law, scored=True, exc=-1.0, **vals):
     return r
 
 
-def pair_cell(system, kind, test, a, b, diffs, reading='worst_over_db', seeds=None):
-    """Rows for two laws on a cell whose difference a - b of one reading is diffs (one value a structure)."""
+def pair_cell(system, kind, test, a, b, diffs, reading='worst_over_db', seeds=None, version='hertzforge', vb=None):
+    """Rows for two laws on a cell whose difference a - b of one reading is diffs (one value a structure); b's rows in
+    version vb (default: the same version)."""
     seeds = seeds or list(range(len(diffs)))
     out = []
     for s, d in zip(seeds, diffs):
-        out.append(row(system, kind, s, test, b, **{reading: BASE[reading]}))
-        out.append(row(system, kind, s, test, a, **{reading: BASE[reading] + d}))
+        out.append(row(system, kind, s, test, b, version=vb or version, **{reading: BASE[reading]}))
+        out.append(row(system, kind, s, test, a, version=version, **{reading: BASE[reading] + d}))
     return out
 
 
@@ -265,8 +266,10 @@ class TestDeterminism(Tmp):
 
 
 class TestReadingsFromCards(Tmp):
-    def card(self, case_id, outcome='completed', scored=True, share=0.9, worst=1.25, coverage=0.5, exc=-0.3):
-        c = dict(run=dict(case_id=case_id), completion=dict(outcome=outcome, coverage=coverage), scored=scored)
+    def card(self, case_id, outcome='completed', scored=True, share=0.9, worst=1.25, coverage=0.5, exc=-0.3,
+             version='hertzforge'):
+        c = dict(run=dict(case_id=case_id, version=version), completion=dict(outcome=outcome, coverage=coverage),
+                 scored=scored)
         if scored:
             c['amplitude'] = {k: dict(share_inside=share, worst_excursion_db=exc) for k in mc.LINES}
             c['resonances'] = dict(worst_db=worst)
@@ -301,6 +304,90 @@ class TestReadingsFromCards(Tmp):
             json.dump(self.card('frame-6x6_s00__T4__matrix'), open(os.path.join(runs, b, 'card.json'), 'w'))
         with self.assertRaises(SystemExit):
             run('readings', runs=runs, out=os.path.join(self.d, 'r.csv'))
+
+    def test_one_run_in_each_version_is_two_runs(self):
+        runs = os.path.join(self.d, 'runs')
+        for b, v in (('a', 'hertzforge'), ('b', 'python')):
+            os.makedirs(os.path.join(runs, b))
+            json.dump(self.card('frame-6x6_s00__T1__matrix', version=v), open(os.path.join(runs, b, 'card.json'), 'w'))
+        out = os.path.join(self.d, 'r.csv')
+        run('readings', runs=runs, out=out)
+        self.assertEqual(sorted(r['version'] for r in mc.load_readings(out)), ['hertzforge', 'python'])
+
+    def test_a_card_without_its_version_is_refused(self):
+        runs = os.path.join(self.d, 'runs', 'a')
+        os.makedirs(runs)
+        c = self.card('frame-6x6_s00__T1__matrix')
+        del c['run']['version']
+        json.dump(c, open(os.path.join(runs, 'card.json'), 'w'))
+        with self.assertRaises(ValueError):
+            run('readings', runs=os.path.dirname(runs), out=os.path.join(self.d, 'r.csv'))
+
+
+class TestVersions(Tmp):
+    """K3 runs in the Python version only: it is paired with the Python matrix, never with the Hertzforge one, and its
+    claims are marked as admitted after the screen."""
+
+    def rows(self):
+        clear = [-1.0] * 16 + [0.0] * 4
+        rows = pair_cell('6x6', 'realistic', 'T1', 'matrix', 'k3', clear, version='python')      # Python matrix - K3
+        # the Hertzforge matrix on the same cell, far from both (a cross-version pair would be a claim)
+        rows += [row('6x6', 'realistic', s, 'T1', 'matrix', version='hertzforge', worst_over_db=BASE['worst_over_db'] + 5.0)
+                 for s in range(20)]
+        return rows
+
+    def test_k3_pairs_with_the_python_matrix_only(self):
+        doc, _ = self.claims(self.rows())
+        pairs = self.kinds(doc, 'pair')
+        self.assertEqual([(c['version'], c['law'], c['against'], c['reading']) for c in pairs],
+                         [('python', 'matrix', 'k3', 'worst_over_db')])
+        self.assertTrue(pairs[0]['text'].startswith('Python version. '))
+        for c in doc['claims']:
+            self.assertFalse(c['kind'] == 'pair' and c['version'] == 'hertzforge', c)
+        # levels: one cell a version, the Hertzforge matrix's apart from the Python matrix's
+        lv = {(c['version'], c['law']) for c in self.kinds(doc, 'level')}
+        self.assertEqual(lv, {('python', 'matrix'), ('python', 'k3'), ('hertzforge', 'matrix')})
+
+    def test_k3_claims_are_marked_admitted_after_the_screen(self):
+        doc, _ = self.claims(self.rows())
+        for c in doc['claims']:
+            names = {c.get('law'), c.get('against')}
+            self.assertEqual('admitted_after_screen' in c, 'k3' in names, c['id'])
+            if 'k3' in names:
+                self.assertIn('Include K3', c['admitted_after_screen'])
+                self.assertIn('admitted to the study after the screen', c['text'])
+
+    def test_effects_stay_within_a_version(self):
+        rows = []
+        for law in ('matrix', 'paired'):
+            rows += pair_cell('12x6', 'strong', 'T4', law, 'x', [0.0] * 20)
+        rows = [r for r in rows if r['law'] != 'x']
+        lin = [dict(r, structure=sid('12x6', 'linear', r['seed']), kind='linear', worst_over_db=r['worst_over_db'] - 2.0)
+               for r in rows]
+        py = [dict(r, version='python') for r in lin]          # a Python linear cell must not pair with a Hertzforge one
+        doc, _ = self.claims(rows + lin + py)
+        eff = self.kinds(doc, 'effect')
+        self.assertTrue(eff)
+        self.assertEqual({c['version'] for c in eff}, {'hertzforge'})
+        # with a Python strong cell as well, each version has its own effect, over its own laws
+        pys = [dict(r, version='python', worst_over_db=r['worst_over_db'] + 1.0) for r in rows]
+        doc, _ = self.claims(rows + lin + py + pys, sub='both')
+        eff = {(c['version'], c['study']['median']) for c in self.kinds(doc, 'effect', reading='worst_over_db')}
+        self.assertEqual(eff, {('hertzforge', 2.0), ('python', 3.0)})
+
+    def test_the_audit_reads_the_claims_version(self):
+        doc, cp = self.claims(self.rows())
+        audit = [dict(r) for r in self.rows()]
+        for r in audit:                                         # the Hertzforge matrix moved onto K3: no effect on the claim
+            if r['version'] == 'hertzforge':
+                r['worst_over_db'] = BASE['worst_over_db'] + 1.0
+        ap = os.path.join(self.d, 'audit.csv')
+        mc.write_csv(ap, audit)
+        out = os.path.join(self.d, 'v.csv')
+        run('check', claims=cp, readings=ap, out=out)
+        v = {r['id']: r for r in csv.DictReader(open(out))}
+        pid = self.kinds(doc, 'pair')[0]['id']
+        self.assertEqual(v[pid]['verdict'], 'holds')
 
 
 if __name__ == '__main__':

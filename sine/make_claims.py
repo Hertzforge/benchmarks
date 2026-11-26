@@ -17,7 +17,10 @@ Readings (the primary three, one value a run, from the scorer's card):
                  the scorer could not score. Threshold 0.2 dB.
   completion     1 for a run that completed, else the share of the test covered at full level (card
                  completion.coverage). A share: threshold 0.05.
-A cell is a system (controls x drives), a structure kind (linear, realistic, strong, realistic_soft, ...) and a test.
+A cell is a version (hertzforge: the runner on the shipped engine; python: the suite's harness), a system (controls x
+drives), a structure kind (linear, realistic, strong, realistic_soft, ...) and a test. Laws are paired only within a
+cell, so never across versions: K3 (Python only) is paired with the Python matrix, never with the Hertzforge one. The
+version is the card's run.version (the scorer reads it from the run file's producer).
 
 Claims:
   pair    for every two laws that ran the same test in a cell, the difference (first minus second, same structure) of
@@ -31,6 +34,8 @@ Claims:
           strong against linear, same system, structure (seed), test and law; the same pair rule over the cell's
           (law, structure) units.
   late    a claim added by hand (add): its text, stamped with the time it was written; not judged by check.
+A claim that names a law admitted after the screen (ADMITTED_AFTER_SCREEN: K3) carries admitted_after_screen with the
+decision, and its text says so: the admission was post hoc, and the audit's held-back runs test its claims.
 
 The audit's test (check), for each claim, on the held-back structures, the same statistic in the same cell:
   pair, effect: "holds" if the audit's median has the claim's sign, is beyond the threshold, and lies inside the
@@ -65,9 +70,12 @@ WORDS = {'iec_share': 'share of the test inside the IEC check-point band at full
 # the tolerance lines the scorer reads (sine_model.TOL); a level claim is made against each
 LINES = ('iec_check_point', 'iec_reference_point', 'mil_composite', 'mil_average_individual', 'mil_maxi_individual')
 LAW_ORDER = ('matrix', 'paired', 'ratio', 'steepest_descent', 'secant')
+VERSIONS = ('hertzforge', 'python')
+ADMITTED_AFTER_SCREEN = {'k3': 'admitted to the study after the screen, by Kevin\'s decision of 2026-11-25 ("Include K3"; '
+                               'DECISIONS.md, G_Screen.md): post hoc, its claims tested on the held-back structures'}
 EFFECTS = (('realistic', 'linear'), ('strong', 'realistic'), ('strong', 'linear'))
 SID = re.compile(r'^frame-(?P<system>\d+x\d+)(?:-(?P<tier>realistic|strong))?(?:_(?P<effect>soft|hard))?_s(?P<seed>\d+)$')
-COLUMNS = (['structure', 'system', 'kind', 'seed', 'test', 'law', 'outcome', 'scored'] + list(READINGS)
+COLUMNS = (['version', 'structure', 'system', 'kind', 'seed', 'test', 'law', 'outcome', 'scored'] + list(READINGS)
            + [f'excursion_{k}' for k in LINES])
 
 
@@ -92,11 +100,14 @@ def reading_row(card):
     """One run's row from its card (the scorer's output)."""
     sid, test, law = card['run']['case_id'].split('__')
     system, kind, seed = parse_sid(sid)
+    version = card['run'].get('version')
+    if version not in VERSIONS:
+        raise ValueError(f"{card['run']['case_id']}: the card does not say which version wrote the run ({version!r})")
     comp = card['completion']
     scored = bool(card.get('scored'))
     cov = float(comp.get('coverage') or 0.0)
     done = comp.get('outcome') == 'completed'
-    row = dict(structure=sid, system=system, kind=kind, seed=seed, test=test, law=law, outcome=comp.get('outcome'),
+    row = dict(version=version, structure=sid, system=system, kind=kind, seed=seed, test=test, law=law, outcome=comp.get('outcome'),
                scored=int(scored), completion=1.0 if done else cov)
     if scored:
         row['iec_share'] = float(card['amplitude']['iec_check_point']['share_inside']) * (1.0 if done else cov)
@@ -118,12 +129,12 @@ def cmd_readings(a):
         if 'card.json' in files:
             card = json.load(open(os.path.join(d, 'card.json')))
             r = reading_row(card)
-            key = (r['structure'], r['test'], r['law'])
+            key = (r['version'], r['structure'], r['test'], r['law'])
             if key in seen:
                 sys.exit(f'two cards for {key}: the readings come from one batch of record')
             seen.add(key)
             rows.append(r)
-    rows.sort(key=lambda r: (r['structure'], r['test'], r['law']))
+    rows.sort(key=lambda r: (r['version'], r['structure'], r['test'], r['law']))
     write_csv(a.out, rows)
     print(f'{len(rows)} runs read into {a.out}')
 
@@ -155,13 +166,15 @@ def load_readings(path):
     with open(path, newline='') as f:
         for r in csv.DictReader(f):
             r = dict(r)
+            if r.get('version') not in VERSIONS:
+                sys.exit(f"a reading without a version ({r.get('version')!r}): {r['structure']} {r['test']} {r['law']}")
             r['seed'] = int(r['seed'])
             for k in READINGS:
                 r[k] = num(r[k])
             for k in LINES:
                 r[f'excursion_{k}'] = num(r[f'excursion_{k}'])
             out.append(r)
-    keys = [(r['structure'], r['test'], r['law']) for r in out]
+    keys = [(r['version'], r['structure'], r['test'], r['law']) for r in out]
     if len(set(keys)) != len(keys):
         sys.exit('a run appears twice in the readings')
     return out
@@ -198,14 +211,14 @@ def law_rank(law):
 def index(rows):
     by = {}
     for r in rows:
-        by[(r['system'], r['kind'], r['test'], r['law'], r['seed'])] = r
+        by[(r['version'], r['system'], r['kind'], r['test'], r['law'], r['seed'])] = r
     return by
 
 
 def cells(rows):
     out = {}
     for r in rows:
-        out.setdefault((r['system'], r['kind'], r['test']), {}).setdefault(r['law'], set()).add(r['seed'])
+        out.setdefault((r['version'], r['system'], r['kind'], r['test']), {}).setdefault(r['law'], set()).add(r['seed'])
     return out
 
 
@@ -219,19 +232,28 @@ def clean(st):
     return {k: (r6(v) if isinstance(v, float) else v) for k, v in st.items() if k != 'claim'}
 
 
-def pair_values(by, system, kind, test, a, b, seeds, reading):
-    return [by[(system, kind, test, a, s)][reading] - by[(system, kind, test, b, s)][reading] for s in seeds]
+def pair_values(by, version, system, kind, test, a, b, seeds, reading):
+    return [by[(version, system, kind, test, a, s)][reading] - by[(version, system, kind, test, b, s)][reading] for s in seeds]
 
 
-def effect_values(by, system, test, hi, lo, units, reading):
-    return [by[(system, hi, test, law, s)][reading] - by[(system, lo, test, law, s)][reading] for law, s in units]
+def effect_values(by, version, system, test, hi, lo, units, reading):
+    return [by[(version, system, hi, test, law, s)][reading] - by[(version, system, lo, test, law, s)][reading]
+            for law, s in units]
+
+
+def admitted(c):
+    """Mark a claim that names a law admitted after the screen."""
+    late = [ADMITTED_AFTER_SCREEN[x] for x in (c.get('law'), c.get('against')) if x in ADMITTED_AFTER_SCREEN]
+    if late:
+        c['admitted_after_screen'] = late[0]
+    return c
 
 
 def the_claims(rows):
     by = index(rows)
     cs = cells(rows)
     claims = []
-    for (system, kind, test), laws in sorted(cs.items()):
+    for (version, system, kind, test), laws in sorted(cs.items()):
         names = sorted(laws, key=law_rank)
         for i, a in enumerate(names):
             for b in names[i + 1:]:
@@ -239,36 +261,38 @@ def the_claims(rows):
                 if not seeds:
                     continue
                 for reading in READINGS:
-                    st = pair_stats(pair_values(by, system, kind, test, a, b, seeds, reading), THRESHOLD[reading])
+                    st = pair_stats(pair_values(by, version, system, kind, test, a, b, seeds, reading), THRESHOLD[reading])
                     if st and st['claim']:
-                        claims.append(dict(kind='pair', system=system, structure_kind=kind, test=test, law=a, against=b,
-                                           reading=reading, side=st['side'], threshold=THRESHOLD[reading], study=clean(st)))
+                        claims.append(admitted(dict(kind='pair', version=version, system=system, structure_kind=kind,
+                                                    test=test, law=a, against=b, reading=reading, side=st['side'],
+                                                    threshold=THRESHOLD[reading], study=clean(st))))
         for law in names:
             seeds = sorted(laws[law])
             for line in LINES:
-                v = np.array([by[(system, kind, test, law, s)][f'excursion_{line}'] for s in seeds], float)
+                v = np.array([by[(version, system, kind, test, law, s)][f'excursion_{line}'] for s in seeds], float)
                 med = q(v, 50)
-                claims.append(dict(kind='level', system=system, structure_kind=kind, test=test, law=law, line=line,
-                                   side='inside' if med <= 0 else 'outside',
-                                   study=dict(n=len(seeds), median=r6(med), q1=r6(q(v, 25)), q3=r6(q(v, 75)),
-                                              unscored=int(np.sum(np.isinf(v))),
-                                              median_iec_share=r6(q([by[(system, kind, test, law, s)]['iec_share'] for s in seeds], 50)),
-                                              median_completion=r6(q([by[(system, kind, test, law, s)]['completion'] for s in seeds], 50)))))
-    # the structure's kind, pooled over the laws
-    systems_tests = sorted({(s, t) for (s, k, t) in cs})
-    for system, test in systems_tests:
+                cell = [by[(version, system, kind, test, law, s)] for s in seeds]
+                claims.append(admitted(dict(kind='level', version=version, system=system, structure_kind=kind, test=test,
+                                            law=law, line=line, side='inside' if med <= 0 else 'outside',
+                                            study=dict(n=len(seeds), median=r6(med), q1=r6(q(v, 25)), q3=r6(q(v, 75)),
+                                                       unscored=int(np.sum(np.isinf(v))),
+                                                       median_iec_share=r6(q([r['iec_share'] for r in cell], 50)),
+                                                       median_completion=r6(q([r['completion'] for r in cell], 50))))))
+    # the structure's kind, pooled over the laws of one version
+    systems_tests = sorted({(v, s, t) for (v, s, k, t) in cs})
+    for version, system, test in systems_tests:
         for hi, lo in EFFECTS:
-            A, B = cs.get((system, hi, test)), cs.get((system, lo, test))
+            A, B = cs.get((version, system, hi, test)), cs.get((version, system, lo, test))
             if not A or not B:
                 continue
             units = sorted((law, s) for law in set(A) & set(B) for s in A[law] & B[law])
             if not units:
                 continue
             for reading in READINGS:
-                st = pair_stats(effect_values(by, system, test, hi, lo, units, reading), THRESHOLD[reading])
+                st = pair_stats(effect_values(by, version, system, test, hi, lo, units, reading), THRESHOLD[reading])
                 if st and st['claim']:
-                    claims.append(dict(kind='effect', system=system, test=test, structure_kind=hi, against=lo, reading=reading,
-                                       side=st['side'], threshold=THRESHOLD[reading],
+                    claims.append(dict(kind='effect', version=version, system=system, test=test, structure_kind=hi,
+                                       against=lo, reading=reading, side=st['side'], threshold=THRESHOLD[reading],
                                        study=dict(clean(st), laws=len({u[0] for u in units}))))
     for k, c in enumerate(claims, 1):
         c['id'] = f'R{k:04d}'
@@ -277,6 +301,15 @@ def the_claims(rows):
 
 
 def text(c):
+    t = _text(c)
+    if c['version'] == 'python':
+        t = 'Python version. ' + t
+    if c.get('admitted_after_screen'):
+        t += ' (K3 was admitted to the study after the screen.)'
+    return t
+
+
+def _text(c):
     s = c['study']
     where = f"system {c['system']}, {c['structure_kind']} structures, {c['test']}"
     if c['kind'] == 'pair':
@@ -329,26 +362,28 @@ def verdict(c, rows):
     by = index(rows)
     cs = cells(rows)
     s = c['study']
+    v_ = c['version']
     if c['kind'] in ('pair', 'level'):
-        laws = cs.get((c['system'], c['structure_kind'], c['test']), {})
+        laws = cs.get((v_, c['system'], c['structure_kind'], c['test']), {})
     if c['kind'] == 'pair':
         seeds = sorted(laws.get(c['law'], set()) & laws.get(c['against'], set()))
         if not seeds:
             return None, 0, 'not tested'
-        st = pair_stats(pair_values(by, c['system'], c['structure_kind'], c['test'], c['law'], c['against'], seeds,
+        st = pair_stats(pair_values(by, v_, c['system'], c['structure_kind'], c['test'], c['law'], c['against'], seeds,
                                     c['reading']), c['threshold'])
     elif c['kind'] == 'effect':
-        A, B = cs.get((c['system'], c['structure_kind'], c['test'])), cs.get((c['system'], c['against'], c['test']))
+        A, B = cs.get((v_, c['system'], c['structure_kind'], c['test'])), cs.get((v_, c['system'], c['against'], c['test']))
         units = sorted((law, x) for law in set(A or {}) & set(B or {}) for x in A[law] & B[law]) if A and B else []
         if not units:
             return None, 0, 'not tested'
-        st = pair_stats(effect_values(by, c['system'], c['test'], c['structure_kind'], c['against'], units, c['reading']),
-                        c['threshold'])
+        st = pair_stats(effect_values(by, v_, c['system'], c['test'], c['structure_kind'], c['against'], units,
+                                      c['reading']), c['threshold'])
     else:
         seeds = sorted(laws.get(c['law'], set()))
         if not seeds:
             return None, 0, 'not tested'
-        v = np.array([by[(c['system'], c['structure_kind'], c['test'], c['law'], x)][f"excursion_{c['line']}"] for x in seeds], float)
+        v = np.array([by[(v_, c['system'], c['structure_kind'], c['test'], c['law'], x)][f"excursion_{c['line']}"]
+                      for x in seeds], float)
         med = q(v, 50)
         side = 'inside' if med <= 0 else 'outside'
         if side != c['side']:

@@ -21,6 +21,7 @@ tiers; the limit block: 6x12 and 6x6, realistic and strong; T5 on block A), on a
 Nothing here runs a law or reads a reading. The only outputs are generation records.
 """
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -41,6 +42,13 @@ DIAG = ('realistic_soft', 'realistic_hard', 'strong_soft', 'strong_hard')
 
 def stamp():
     return time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def exported(root, name):
+    """Whether the generator has exported structure `name`: its meta file (in the generator's own folder for structures
+    under exports/) and its case file both written."""
+    return (bool(glob.glob(os.path.join(root, 'exports', '*', name, 'meta_v2.json'))) and
+            os.path.exists(os.path.join(root, 'exports', 'cases_v2', f'{name}_pinv_closed_default_line_hold_divopen.json')))
 
 
 def env_for(root, threads=None):
@@ -130,9 +138,7 @@ def cmd_export(a):
         raise SystemExit(f'w_table failed: {p.stderr[-600:]}')
     def done(job):
         s, ns, nc, v = job
-        name = f's{s}_{ns}x{nc}_{v}'
-        return (os.path.exists(os.path.join(a.root, 'exports', 'plants', name, 'meta_v2.json')) and
-                os.path.exists(os.path.join(a.root, 'exports', 'cases_v2', f'{name}_pinv_closed_default_line_hold_divopen.json')))
+        return exported(a.root, f's{s}_{ns}x{nc}_{v}')
     already = [j for j in js if a.resume and done(j)]
     if a.resume:
         log(a.root, f'EXPORT RESUME: {len(already)} of {len(js)} already exported (meta and case written), {len(js) - len(already)} to export')

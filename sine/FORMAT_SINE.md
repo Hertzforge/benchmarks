@@ -219,10 +219,22 @@ from its commit after `572ca47d`; at `572ca47d` it refuses the key (exit 2).
 
 The run folder's `run.json` (`msnb-run/1`): `case_id`; `outcome` (`class`, `engine_outcome`,
 `guard`, `channel`, `frequency_hz`, `time_s`, `level_db`, `message`); `history` (`time_s`,
-`frequency_hz`, `level_db`, `judged`, `control_re/_im`, `reference_re/_im`, `drive_re/_im`,
-`limit_re/_im`, `limit_bound`, `bin_error_db_min/_max`); `true_modes` (`tracked`, `modes`,
-`frequency_hz`); `summary` (`largest_drive_vpk`, `over_ceiling_samples`); `settings.drive_gain`
-(1 when absent). `read_run` in `sine_scorer.py` is the one place that reads them. The history's
+`frequency_hz`, `level_db`, `judged`, `settling`, `decimation`, `control_re/_im`, `reference_re/_im`,
+`drive_re/_im`, `limit_re/_im`, `limit_bound`, `bin_error_db_min/_max`, and for a thinned stepped
+sine or dwell `bin_updates`, `bin_drive_vpk_max`, `bin_drive_norm_max`); `true_modes` (`tracked`,
+`modes`, `frequency_hz`, and `frequency_hz_min/_max` thinned); `summary` (`largest_drive_vpk`,
+`over_ceiling_samples`); `settings.drive_gain` (1 when absent); `options.harness` and
+`producer.program` (which version wrote the run, the card's `run.version`). `read_run` in
+`sine_scorer.py` is the one place that reads them.
+
+**A thinned stepped sine or dwell** (`decimation` `"every judged update"`, the runner's
+FORMAT_RUN.md "Thinning", since Package I; the Python harness writes the same). Every judged
+update is a point of its own, so every reading over the judged updates is the whole file's; the
+other updates are spans, read through their counts (`completion.updates`) and their drive and mode
+extremes (`drive.norm_max_v`, `largest_drive_v` and their structure values; `state`); an extreme is null on a
+point that stands for one update, and the scorer reads the point's own value there. Checked on
+the pilot's 27 T3 and 45 T4 cases in both versions, thinned against `--whole-history`
+(MSNB-I-E2). A step's error extremes are not read (nothing lies between its judged updates). The history's
 drives are engine volts; every reading through the model (held-out gauges, stress, effort) uses
 them times the gain, the structure's input. The `drive` reading gives both.
 
@@ -295,7 +307,12 @@ The generation log's last line is `GENERATION END: <made> made, <refused> refuse
 ## 12. The Batch
 
 `python3 sine/batch.py --problems <problems> --out <runs> --name <batch> --runner <msnb_run>
-[--workers 6] [--only ...] [--tests ...] [--laws ...] [--min-free-gb 50]`. One run folder a job:
+[--workers 16] [--only ...] [--tests ...] [--laws ...] [--min-free-gb 50] [--cases ...] [--jobs ...]
+[--big-systems 24x12] [--big-at-once 4]`. At most 18 workers (the machine's cores); 24x12 jobs
+are spread evenly through the list and at most four run at once (one held 2.69 GB); the free disk
+is read under `--out` and on `/`. `sine/batch_agent.py start` runs one set of
+`sine/record_jobs.py` as a launchd agent at normal priority from a local copy of the suite, with
+16 workers, refusing to start under 50 GB free on `/`. One run folder a job:
 the runner's `run.json`, the batch's `batch.json` (the suite's code hash, the runner's and the
 case's SHA-256, the runner's exit status) and the scorer's `card.json` (with the code hash). The
 batch stops starting jobs when the free disk is under 50 GB. The log names each job and gives no
@@ -361,7 +378,7 @@ What the harness restates from the shipped engine (`hertzforge-mimo-sine` `core.
 | Drive gain | The case's `drives.gain` multiplies the drive where the structure is played; the law, ceilings and run file in engine volts; the exact response handed to the law is per engine volt (times the gain) |
 | Caps and guards | Change caps per drive against the drive as played; divergence stop after `divergence_s` of binding caps; a drive over its ceiling scales the whole vector; drive abort; 3 law misses a law fault; the runner's time limit `1.5 x (test + rungs) + 60 s` |
 | Protective | `default` and `widened` as the runner's table |
-| Run file | History decimated as the runner's (1/48-octave bins from the band's low edge at each level, with the bins' counts and error extremes; every update for a step or a dwell); `true_modes` from the simulator's own envelopes at the end of each tick, for the modes in the identification's band; outcome classes and guard names as the runner's |
+| Run file | History decimated as the runner's (1/48-octave bins from the band's low edge at each level, with the bins' counts and error extremes; a step or a dwell thinned as the runner's, every judged update and the ends of the spans between, with the spans' counts and drive and mode extremes, or every update with `--whole-history`); `true_modes` from the simulator's own envelopes at the end of each tick, for the modes in the identification's band; outcome classes and guard names as the runner's |
 
 What it leaves out or does differently:
 
