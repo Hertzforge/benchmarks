@@ -1,16 +1,15 @@
 """K5, recursive identification with a cycling dither, for a dwell: the research testbed's law
-(the msine-research testbed, drafts/D2/k5_rls_dither.py, package D2; catalog `Candidate_Laws.md` K5) ported to the suite's
-law interface (Package F of the MIMO Sine benchmark). The testbed's text follows; two changes, both no-ops on a
+(its draft `k5_rls_dither.py`; catalog entry K5) ported to the suite's
+law interface. The testbed's text follows; two changes, both no-ops on a
 testbed setup (no `tracker_delay_factor`, no `transport_delay_s`):
   - imports from the suite's pyloop (`interface`, `laws_baselines`);
   - the period's settle time reads the tracker's delay as the suite's laws do (`laws_baselines.tracker_delay`: the
     setup's factor over the bandwidth, the testbed's 2 / (2 pi B) by default) and adds the setup's transport delay,
-    as Package B made the baselines' settle time read the engine's loop delays.
-The port is checked against the testbed's own class on testbed cases (07_Research/MIMO_Sine_Benchmark/
-experiments/F/port_check.py).
+    as the baselines' settle time reads the engine's loop delays.
+The port was checked against the testbed's own class on testbed cases.
 
 K5, recursive identification with a cycling dither, for a dwell (catalog entry K5, components G1
-and G6; package D2 draft).
+and G6).
 
 At a fixed frequency the law estimates the response matrix from differences of the drive and the
 response over a dither period, with forgetting, and corrects through the estimate. Each period one

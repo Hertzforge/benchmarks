@@ -4,9 +4,9 @@
         [--workers 16] [--only frame-6x6_s00,...] [--tests T1,T4] [--laws matrix] [--min-free-gb 50] [--job-timeout 7200] \
         [--cases <case folder>] [--jobs <jobs.json>] [--big-systems 24x12] [--big-at-once 4]
 
---workers: runs at once, 16 by default (the study's), at most 18 (the Mac mini's 18 cores: the study guide's limit across
+--workers: runs at once, 16 by default (the study's), at most 18 (the Mac mini's 18 cores: the limit across
 every batch running at once). --runner may be the Python version's harness (sine/pyloop/harness.py), run with this
-interpreter. Jobs on a --big-systems system (24x12 by default; one 24x12 run held 2.69 GB, MSNB-C-A-7) are spread evenly
+interpreter. Jobs on a --big-systems system (24x12 by default; one 24x12 run held 2.69 GB) are spread evenly
 through the list and at most --big-at-once of them run at once; the others fill the workers meanwhile. The order and the
 limit change no number a run gives (each run is one process on its own case). sine/batch_agent.py starts a set as a
 launchd agent at normal priority.
@@ -44,7 +44,7 @@ sys.path.insert(0, HERE)
 import plan  # noqa: E402
 
 DEFAULT_WORKERS = 16                 # the study's: the launchd agent at normal priority, 16 runs at once
-MAX_WORKERS = 18                     # the Mac mini's cores: the study guide's limit across every batch at once
+MAX_WORKERS = 18                     # the Mac mini's cores: the limit across every batch at once
 BIG_SYSTEMS = ('24x12',)
 BIG_AT_ONCE = 4
 

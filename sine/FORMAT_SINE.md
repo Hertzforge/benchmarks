@@ -109,7 +109,7 @@ on 1,601 ratios from 1e-5 to 1e3; its inverse gives the mode's ratio at any scal
 its frequency change, and a bisection finds `s`. A quasi-steady figure: a sweep that gives a mode
 too little time leaves it under this state.
 
-Checked against `simulate_level` (experiment MSNB-B-E1, `check_tone_state.py`): on
+Checked against `simulate_level` (`check_tone_state.py`): on
 frame-12x6-realistic s00, five tones, the largest envelope over the last tone period against the
 predicted fixed point agreed to within 3 % for every mode within a quarter octave of the tone
 (the modes the rule is read at), and the frequency change of the largest mode at each tone agreed
@@ -129,7 +129,7 @@ change, damping factor, the largest drop and rise, and the highest frequency rea
 Every test runs a ladder before its judged level: levels -12, -9, -6, -3 and 0 dB against full
 level (the engine's default level table), each rung but the last held 2 s (the runner's default
 rung), the last held to the end of the test (the runner's `ladder`). A one-level run on a realistic
-structure aborts at the end of the settle window (the runner's experiment MSNB-A-E1), so every test
+structure aborts at the end of the settle window (the runner's own trial), so every test
 climbs. The engine runs the ladder on the test's own clock (`hertzforge-mimo-sine` `schedule.rs`:
 the ladder ticks beside the test plan; a dwell's clock, a step's clock and the ladder's stop in a
 settle window, a sweep's does not). So the lower rungs take the first part of the test: a sweep
@@ -178,8 +178,7 @@ bite (dB over the bound at the top peak), the regions over the bound and their s
 
 ## 7. Case Files (the Runner's `msnb-case/1`)
 
-The runner and its formats are Package A's (`crates/sds-control/examples/msnb_run/FORMAT_RUN.md`
-of the Hertzforge repository, draft commit 1c0a4a24); the schema is copied here as
+The runner and its formats are the Hertzforge repository's (`crates/sds-control/examples/msnb_run/FORMAT_RUN.md`); the schema is copied here as
 `msnb-case-1.schema.json` and every case is checked against it (`case_schema.py`). Paths are
 relative to the problems folder, the runner's `--root`.
 
@@ -208,7 +207,7 @@ structure's input in volts per engine volt, the problem's ideal full-level drive
 drive), so that peak is 1 V in engine volts. The ceiling, `drives.ceiling_vpk`, is 6 dB over it
 (`sine_model.DRIVE_HEADROOM_DB`; 1.99526231 V), the margin the generation's finite-play check
 already proves. The engine's 10 V range is the converter's and is not raised: without the gain,
-the 24 problems whose ideal drive is 10 V or more (MSNB-B-E5) could not be given that margin. The
+the 24 problems whose ideal drive is 10 V or more could not be given that margin. The
 gain is applied only where the drive is played (the runner's station edge, the harness's `play`);
 the law, its ceilings and every drive in a run file are in engine volts, and the identification a
 law is built on is per engine volt. A run file states the gain as `settings.drive_gain`. The
@@ -228,13 +227,12 @@ sine or dwell `bin_updates`, `bin_drive_vpk_max`, `bin_drive_norm_max`); `true_m
 `sine_scorer.py` is the one place that reads them.
 
 **A thinned stepped sine or dwell** (`decimation` `"every judged update"`, the runner's
-FORMAT_RUN.md "Thinning", since Package I; the Python harness writes the same). Every judged
+FORMAT_RUN.md "Thinning", since ae21777; the Python harness writes the same). Every judged
 update is a point of its own, so every reading over the judged updates is the whole file's; the
 other updates are spans, read through their counts (`completion.updates`) and their drive and mode
 extremes (`drive.norm_max_v`, `largest_drive_v` and their structure values; `state`); an extreme is null on a
 point that stands for one update, and the scorer reads the point's own value there. Checked on
-the pilot's 27 T3 and 45 T4 cases in both versions, thinned against `--whole-history`
-(MSNB-I-E2). A step's error extremes are not read (nothing lies between its judged updates). The history's
+the pilot's 27 T3 and 45 T4 cases in both versions, thinned against `--whole-history`. A step's error extremes are not read (nothing lies between its judged updates). The history's
 drives are engine volts; every reading through the model (held-out gauges, stress, effort) uses
 them times the gain, the structure's input. The `drive` reading gives both.
 
@@ -325,10 +323,10 @@ with the batch's own Python.
 `python3 sine/pyloop/harness.py <case> --root <problems> --out <run folder>` runs one case with no
 Hertzforge build and writes `run.json` in the runner's `msnb-run/1` layout (and `timing.json`),
 so the same scorer reads either. Exit status as the runner's: 0 completed, 1 another end, 2
-refused (nothing written). Agreement between the harness and the engine: `sine/agree/` (Package D), the comparison of
+refused (nothing written). Agreement between the harness and the engine: `sine/agree/`, the comparison of
 the two versions' cards reading by reading against fixed criteria.
 
-The laws (`sine/pyloop/`) are the research testbed's (`msine_gym` and its `build_m` reference
+The laws (`sine/pyloop/`) are the research testbed's (its gym and its `build_m` reference
 compositions). Changed from the testbed: the imports; the controller keeps only its quasi-steady
 loop (what the parity vectors were made with); `identification` and `structures` keep only the
 classes the laws read; the loop-speed rule and the secant's settle count read the tracker's delay
@@ -337,7 +335,7 @@ none, as the shipped law math's defaults). `paired` is `PairedRef`, `ratio` `Rat
 (pairing by reference), `steepest_descent` `SteepestDescent`, `secant` `SecantComplexGain` (carry
 factor; with the shipped law's level carry, law-math `secant.rs` `follow_level` since the engine's
 c54b9677: at a level move it scales the base reading, its drive and error and the last control
-step's reading and drive by the level's ratio and restarts its settle wait; Package F, which found
+step's reading and drive by the level's ratio and restarts its settle wait; the pipeline work, which found
 the runner's T4 `secant` drives 11 % apart from the harness's at the first level move without it),
 each at the shipped manifest's defaults (`params` `{}`; other parameters are refused).
 `matrix` is `ShippedMatrix` (`pyloop/matrix_shipped.py`): `RefMatrix` (free phase in phase) with
@@ -365,10 +363,10 @@ What the harness restates from the shipped engine (`hertzforge-mimo-sine` `core.
 | Part | As restated |
 |---|---|
 | Update | The case's `tick_s` in whole samples; the drive ramps linearly over a tick; the tone's frequency is held through a tick and is phase-continuous |
-| Structure | A jointed structure (realistic, strong): `reference_model.simulate_level` on the controls and limit channels, the structure's own modes, step and level rule, continued tick to tick. The linear tier (a modal structure): the simulator's fitted discretization, restated (`pyloop/fitted.py`): each mode the continuous mode's exact poles behind a 9-tap numerator fitted to its response delayed 4 samples, 0 to 2200 Hz (the structure's `simulator.discretization`); the reference model's own triangle hold is up to 20 % off the continuous response at 2000 Hz, the fitted filters agree with the engine's own response to 2.5e-12 (Package D). White noise of `noise.rms_m_s2` added, seeded by `noise.seed` |
+| Structure | A jointed structure (realistic, strong): `reference_model.simulate_level` on the controls and limit channels, the structure's own modes, step and level rule, continued tick to tick. The linear tier (a modal structure): the simulator's fitted discretization, restated (`pyloop/fitted.py`): each mode the continuous mode's exact poles behind a 9-tap numerator fitted to its response delayed 4 samples, 0 to 2200 Hz (the structure's `simulator.discretization`); the reference model's own triangle hold is up to 20 % off the continuous response at 2000 Hz, the fitted filters agree with the engine's own response to 2.5e-12. White noise of `noise.rms_m_s2` added, seeded by `noise.seed` |
 | Tracker | Four cascaded one-pole sections on the heterodyned signal, `alpha = B_n / (0.15625 fs)`, `B_n` 10 % of the frequency, at most 100 Hz, set each update |
 | Schedule | The ladder on the test's clock; the dwell's, a step's and the ladder's clocks stop in a settle window, a sweep's does not; the stepped grid from the low edge, `steps_per_octave` an octave |
-| Pipeline (the default; `--no-pipeline` leaves it out, as the harness was at d11f453) | The drive reaches the structure 264 samples after it is written (the engine's 8 frames ahead of the first drive frame, `service.rs` `StationStart::frames_ahead`, and one 256-frame block of the simulator station, `SIM_BLOCK_FRAMES`); each reading demodulated against the oscillator's phase 264 samples back, the delay this loop's identification has taken out, so a steady reading is `H D` on the exact response (the engine retards by its whole measured lag and its identification carries the structure's own delay, the turn: the one convention difference, as `--ident` already treats it). The lag `lag_frames` comes with an engine run's identification (`--ident`, `--guard-ident`); on the exact response it is restated from `ident.rs` `measure_lag` (the measured shot's first realization, the service's splitmix64 seed 0x5EED0003, its cross-correlation's largest sum): equal to the runner's on 67 of 70 structure and test pairs of the agreement sample, the three others realistic dwells (Package F, `experiments/F/lag_check.py`). The run file records `identification.pipeline` |
+| Pipeline (the default; `--no-pipeline` leaves it out, as the harness was at d11f453) | The drive reaches the structure 264 samples after it is written (the engine's 8 frames ahead of the first drive frame, `service.rs` `StationStart::frames_ahead`, and one 256-frame block of the simulator station, `SIM_BLOCK_FRAMES`); each reading demodulated against the oscillator's phase 264 samples back, the delay this loop's identification has taken out, so a steady reading is `H D` on the exact response (the engine retards by its whole measured lag and its identification carries the structure's own delay, the turn: the one convention difference, as `--ident` already treats it). The lag `lag_frames` comes with an engine run's identification (`--ident`, `--guard-ident`); on the exact response it is restated from `ident.rs` `measure_lag` (the measured shot's first realization, the service's splitmix64 seed 0x5EED0003, its cross-correlation's largest sum): equal to the runner's on 67 of 70 structure and test pairs of the agreement sample, the three others realistic dwells. The run file records `identification.pipeline` |
 | Settle window | `2 x 1.3 / B_n + 3 x` the identification's group delay (largest element form, five-line smoothing, the largest within +/-2 `B_n`), read with the lag taken out, `+ lag_frames / fs` (`core.rs` `settle_s`), opened at engage, at every level move and at every step |
 | Level carry | The drive in force scaled with each move of the level, by at most 1 dB down and min(1 dB, 240 dB/s x tick) up an update; the law told `engage` (hold) while the window is open |
 | First drive | At engage and at every step the law engages again; its drive bounded to the regularized inverse drive (1e-3) plus 6 dB, or 5 % of the ceilings' norm on an untrusted line |
@@ -394,9 +392,9 @@ What it leaves out or does differently:
 | Not modelled | Law requests (never honoured, as the runner's default), the rotation cap (none, as the default), the law's compute budget, kinematic ratings, events (`events` empty) | |
 | A rung of whole sweeps | `ladder.rung.sweeps`: the sweep bounces at the band's edges, one-direction passes counted, the rung moving after that many passes, the test `sweeps` passes a rung (the engine's `BidirSweep` and `LadderPlan`); the time limit `1.5 x (test + rungs x sweeps x test) + 60 s` as the runner's | The runner sets every sweep to one pass, so a case with a rung of sweeps ends after its first rung there; the harness is the only version that runs such a case (the candidate K4's passes) |
 
-## 14. The Candidate Laws (Package F)
+## 14. The Candidate Laws
 
-The research round's candidates (`07_Research/MIMO_Sine/Candidate_Laws.md`), ported from the research testbed into
+The research round's candidates, ported from the research testbed into
 `sine/pyloop/` so the harness can screen them. They are not shipped laws and the runner does not have them; a case
 for one is `msnb-case/1` with the candidate's id, checked as the runner's case with the law entry checked against
 the harness's own table (`harness.py` `CANDIDATES`). Each takes the reference's phase (`reference.phase` `auto` runs
@@ -404,25 +402,24 @@ them `specified`). A case may set the parameters listed; everything else is the 
 
 | Id | Testbed class (source) | Tests | Defaults that differ from the testbed's | Parameters a case may set |
 |---|---|---|---|---|
-| `k2f` | `FamilyInverse` (`drafts/D1/laws/d1_modal_laws.py`, the suite's `pyloop/modal.py`, the same code) | sweep, stepped | `expected_drop` 0.05 (a drop, the tuning structures' median full-level change, 4.8 to 5.4 %); `expected_damp` 1. The testbed was handed the true shift (study only); without one the family has one member and is the carried loop through the modal form | `expected_drop`, `expected_damp`, `span_margin` (1.5), `spacing_bw` (1.0), `max_members` (9), `mu` (1e-3), `modal_fit` |
-| `k3` | `FollowedPoles` (same files) | sweep | `modal_fit` `m7d` (Package G); otherwise none (`window` 40, `fit_every` 2, `near_bw` 4, `prior_bw` 4, `prior_lnz` 1, `range_bw` 12, `step_bw` 0.25, `data_rel` 0.02, `gate_snr` 1, `iters` 2, `gate` on, `gate_ratio` 2, `fallback` frozen) | those, `expected_drop`, `expected_damp` (for the family fallback), `modal_fit` |
-| `k4` | `LevelLadder` (`drafts/D2/k4_ladder.py`; `pyloop/k4_ladder.py`) | sweep | the model: the testbed's class takes only the true shapes and poles (study only); here the law's own modal fit (`modal_fit` `m7d`, Package G), each residue made rank one, the identification's smoothed remainder kept (`FittedModalModel`) | `predict` (on), `p_default` (1), `q_default` (1), `fit_bw` (3), `fit_frac` (0.5), `min_points` (5), `fit_iters` (2), `modal_fit` |
-| `k5` | `RLSDither` (`drafts/D2/k5_rls_dither.py`; `pyloop/k5_rls_dither.py`) | dwell | none (`dither` 0.01 on the response, `lam` 0.98, `period` the settle time, no dead band) | `dither`, `lam`, `period`, `deadband_db`, `dither_in_deadband`, `dither_on` |
+| `k2f` | `FamilyInverse` (the testbed's modal laws, the suite's `pyloop/modal.py`, the same code) | sweep, stepped | `expected_drop` 0.05 (a drop, the tuning structures' median full-level change, 4.8 to 5.4 %); `expected_damp` 1. The testbed was handed the true shift (study only); without one the family has one member and is the carried loop through the modal form | `expected_drop`, `expected_damp`, `span_margin` (1.5), `spacing_bw` (1.0), `max_members` (9), `mu` (1e-3), `modal_fit` |
+| `k3` | `FollowedPoles` (same files) | sweep | `modal_fit` `m7d`; otherwise none (`window` 40, `fit_every` 2, `near_bw` 4, `prior_bw` 4, `prior_lnz` 1, `range_bw` 12, `step_bw` 0.25, `data_rel` 0.02, `gate_snr` 1, `iters` 2, `gate` on, `gate_ratio` 2, `fallback` frozen) | those, `expected_drop`, `expected_damp` (for the family fallback), `modal_fit` |
+| `k4` | `LevelLadder` (the testbed's `k4_ladder.py`; `pyloop/k4_ladder.py`) | sweep | the model: the testbed's class takes only the true shapes and poles (study only); here the law's own modal fit (`modal_fit` `m7d`), each residue made rank one, the identification's smoothed remainder kept (`FittedModalModel`) | `predict` (on), `p_default` (1), `q_default` (1), `fit_bw` (3), `fit_frac` (0.5), `min_points` (5), `fit_iters` (2), `modal_fit` |
+| `k5` | `RLSDither` (the testbed's `k5_rls_dither.py`; `pyloop/k5_rls_dither.py`) | dwell | none (`dither` 0.01 on the response, `lam` 0.98, `period` the settle time, no dead band) | `dither`, `lam`, `period`, `deadband_db`, `dither_in_deadband`, `dither_on` |
 
 The carried loop under `k2f` and `k3` (`pyloop/carried.py`, catalog K1) keeps its testbed defaults: `g` 0.5 with the
 loop-speed rule (`beta` 0.5), `eps` 1e-3, look-ahead on, the modal form's remainder smoothed over 8 lines.
 
 **What the ports change.** Imports; the tracker's delay and the transport delay read from the setup where the
-testbed wrote its own `2 / (2 pi B)` (K5's period, K4's pairing of a reading with an earlier drive), as Package B
-did for the baselines (on a testbed setup both are the testbed's numbers); K4's model without the truth. K3's own
+testbed wrote its own `2 / (2 pi B)` (K5's period, K4's pairing of a reading with an earlier drive), as the suite
+does for the baselines (on a testbed setup both are the testbed's numbers); K4's model without the truth. K3's own
 prediction of the readings still runs the testbed's two one-pole tracker stages, not the engine's four sections
-(not changed: a port, not a redesign). Each port is checked against the testbed's own class on two testbed cases
-(`07_Research/MIMO_Sine_Benchmark/experiments/F/port_check.py`).
+(not changed: a port, not a redesign). Each port was checked against the testbed's own class on two testbed cases.
 
 **The modal fit switch.** `modal_fit` names the fit a modal law is built on (`pyloop/modal.py` `MODAL_FITS`):
-`current` is the research round's (`ModalForm.fit`); `m7d` and `m9d` are the modal-fit package's M7d and M9d
-(Package C, `07_Research/MIMO_Sine_Benchmark/C_Modal_Fit.md` sections 4 to 6), ported line for line in
-`pyloop/modal_fits.py` (Package G). **`k3` and `k4` default to `m7d`; `k2f` stays on `current`.** `k2f`, `k3` and `k4`
+`current` is the research round's (`ModalForm.fit`); `m7d` and `m9d` are the modal-fit study's M7d and M9d,
+ported line for line in
+`pyloop/modal_fits.py`. **`k3` and `k4` default to `m7d`; `k2f` stays on `current`.** `k2f`, `k3` and `k4`
 all rest on the fit (K2f's family is built from the modal form's poles).
 
 M7d: half-octave pLSCF fit ranges overlapping a quarter octave, orders 12 to 24, poles clustered over the orders (1 %
@@ -433,11 +430,11 @@ identification before the fit and put it back on the residues at each mode's fre
 block's own, read from the structure file** (`harness.py` `block_delay_samples`: the fitted discretization's `delay`
 on the linear tier, 4 samples; otherwise `transport_delay_samples` plus the equalized step's `half_taps`, 2 on the
 jointed tiers; none, and the fit refused, when the controls carry their own output delays), set on the law's
-identification as `block_delay`: the delay a loopback measures on a real station. It is not estimated (Package C's
+identification as `block_delay`: the delay a loopback measures on a real station. It is not estimated (the study's
 estimate is the fallback it recommends against) and it is not the engine's lag: the lag less the pipeline is a
 cross-correlation's peak, 8 samples on frame-6x6-realistic s00 and 14 on frame-12x6 s00, and a fit with it is worse
-than a fit with no delay taken out (Package G, `experiments/G/port_check.py`). The port is checked against Package C's
-code on three identifications (`tests/data/m7d_parity.json`, written by C's code) and is the same to the last bit on
+than a fit with no delay taken out. The port is checked against the study's
+code on three identifications (`tests/data/m7d_parity.json`, written by that code) and is the same to the last bit on
 the two frames of the port check. A run file's `law.modal_form` records the fit's source, its known delay and its
 modes.
 

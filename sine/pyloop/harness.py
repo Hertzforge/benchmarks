@@ -66,12 +66,12 @@ LAWS = {
     'secant': (BASELINES['secant_complex_gain'], dict(carry='factor'), False),
 }
 
-# The research round's candidates (Candidate_Laws.md K2f, K3, K4, K5), ported from the testbed (Package F): not
+# The research round's candidates (K2f, K3, K4, K5), ported from the research testbed: not
 # shipped laws, so not in the runner; the harness runs them for the screen. Each: (class, its defaults here, amplitude
 # only, the test types it accepts, the parameters a case may set). Defaults are the testbed classes' own except where
 # a comment says (FORMAT_SINE.md, "The Candidate Laws").
 K2F_EXPECTED_DROP = 0.05            # K2f's expected full-level drop: the tuning structures' median change (FORMAT_SINE)
-K34_MODAL_FIT = 'm7d'               # K3's and K4's modal fit: Package C's M7d with the known delay (Package G)
+K34_MODAL_FIT = 'm7d'               # K3's and K4's modal fit: the modal-fit study's M7d with the known delay
 CANDIDATES = {
     'k2f': (FamilyInverse, dict(expected_drop=K2F_EXPECTED_DROP, expected_damp=1.0, modal_fit='current'), False,
             ('sweep', 'stepped'), ('expected_drop', 'expected_damp', 'span_margin', 'spacing_bw', 'max_members', 'mu',
@@ -114,7 +114,7 @@ PROTECTIVE = {
 #    queued ahead of the first drive frame, 8 on a station that steps with the service (the engine's prefill 4 and
 #    queue 4: hertzforge-mimo-sine service.rs StationStart::frames_ahead, tests/real_time_start.rs "the prefill and
 #    the queue"; recorded as `frames_ahead` 8 on every runner run of the agreement sample), and one block of the
-#    simulator station (service.rs SIM_BLOCK_FRAMES = 256; the block's delay was found by fitting, MSNB-A-E2, and is
+#    simulator station (service.rs SIM_BLOCK_FRAMES = 256; the block's delay was found by fitting, and is
 #    fitted again on every runner run as `ideal_vs_measured.fitted_delay_samples`);
 #  - the lag the identification measures, `lag_frames`, is that pipeline plus the structure's own apparent delay (the
 #    turn): ident.rs measure_lag, the largest sum over response and drive pairs of |the circular cross-correlation| of
@@ -641,7 +641,7 @@ def block_delay_samples(case):
     common `transport_delay_samples` plus the equalized step's `half_taps` (reference_model.discrete_frf: the delay on
     every path). None when the controls carry their own output delays (no single delay). This is the identification's
     pure delay; the lag the engine measures (`lag_frames`, a cross-correlation's peak) is not: on frame-6x6-realistic
-    s00 the lag less the pipeline is 8 samples where the block's delay is 2 (Package G, port_check.py)."""
+    s00 the lag less the pipeline is 8 samples where the block's delay is 2."""
     sim = case.st.raw.get('simulator') or {}
     if is_fitted(case.st):
         return float(sim['discretization']['delay'])

@@ -4,7 +4,7 @@ Each drive plays its own band-limited Gaussian noise (independent across drives)
 stepped in time from rest (through the actuator), measurement noise is added, the first `skip_s`
 seconds are dropped, and the frequency response is estimated per line by H1 = S_yx S_xx^-1 from
 Hann-windowed segments with 50 percent overlap, under the negative-exponent transform, so that
-C = H D for a drive d = Re{D exp(j w t)} (Notation.md). Gives the controls' Hhat0, the limit
+C = H D for a drive d = Re{D exp(j w t)}. Gives the controls' Hhat0, the limit
 channels' That0, the multiple coherence of each, and a trust mask, on the grid of lines in band.
 """
 from __future__ import annotations

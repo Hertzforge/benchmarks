@@ -9,7 +9,7 @@ frequency response from drive j to output i is (as in the benchmark reference mo
 
 Outputs have roles: `control` (n of them), `limit` (p), anything else is a monitor.
 
-A level-dependent mode follows the Open Benchmark Set's level rule (Level_Rule_Spec.md, 0.2-draft)
+A level-dependent mode follows the Open Benchmark Set's level rule (format 0.2-draft)
 on r_m = envelope / reference_amplitude:
 
     f    = f0 (1 - drop min(1, r)^drop_exponent + rise min(rise_cap, r)^rise_exponent)

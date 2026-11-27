@@ -1,5 +1,5 @@
-"""K1. Carried inverse with a loop-speed rule (catalog K1 = A2 + B1 + C1; Derivations LD-2 and its
-amendment; component G1).
+"""K1. Carried inverse with a loop-speed rule (catalog entry K1;
+component G1).
 
 The error is integrated at the controls, not at the drives, and sent through the model at the
 frequency the next drive will play at:
@@ -40,7 +40,7 @@ def _db(x):
 def smooth_grid(g, H, s):
     """Local quadratic least squares of the identification over +-s lines (each element, real and
     imaginary parts): the identification's line-to-line estimation scatter goes straight into a
-    carried drive, where the published law's integrator averaged it (MSN-D1-01 probe)."""
+    carried drive, where the published law's integrator averaged it (a probe of the research round)."""
     L = g.size
     out = np.empty_like(H)
     Hf = H.reshape(L, -1)
@@ -72,7 +72,7 @@ class CarriedInverse(Law):
         self._Hs = smooth_grid(setup.ident.grid_hz, setup.ident.H0, self.smooth) if self.smooth > 0 else None
         self.u = np.zeros(setup.n, complex)
         self.D_asked = None
-        # G3, divergence watch with switch-on leakage (catalog G3; L2 new idea N7): off unless asked
+        # G3, divergence watch with switch-on leakage (catalog G3): off unless asked
         self.watch, self.wn, self.wrise, self.wfloor = watch, int(watch_n), watch_rise_db, watch_floor_db
         self.leak, self.wrel = leak, int(watch_release)
         self.ehist = []

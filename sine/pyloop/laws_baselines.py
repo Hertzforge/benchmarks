@@ -1,7 +1,7 @@
 """The published baseline laws behind the testbed's interface.
 
-Built from package L1's report (Prior_Art_Published_Control_2026-11-14.md), cited by section
-number only. Shared notation (Notation.md): E = R - C, Z = regularized pseudo-inverse of the model.
+Built from a survey of the published control laws, cited by section
+number only. Shared notation: E = R - C, Z = regularized pseudo-inverse of the model.
 Each law uses the drive in force as played (after the controller's guards) as D_k.
 """
 from __future__ import annotations
@@ -25,12 +25,11 @@ def loop_gain(setup, f, g, rule, beta):
     own response time read from the identification as the group delay of Hhat0 (largest over the
     elements above a tenth of the line's largest; about 1 / (zeta w) at a resonance), taken as the
     largest within f +- 2 B, because a light mode whose free response falls inside the filter's
-    band limits the loop even off its resonance (package L2, D-2 item 4; MSN-T-09 found the
+    band limits the loop even off its resonance (an earlier test found the
     local value alone let the linear twin diverge in a stepped sine), dt_c for the update's own
     delay. It keeps the integrating loop's crossover (g / dt_c rad/s) at beta over the
     total lag: Ratz's rules (compression proportional to f / Q, B T_L >> 1; L1 section 9) read for
-    a matrix loop. Without it, g = 0.5 per 10 ms update oscillates on the development structures
-    (MSN-T-03)."""
+    a matrix loop. Without it, g = 0.5 per 10 ms update oscillates on the development structures."""
     if rule == 'fixed':
         return g
     B = setup.tracking_bw(f)
@@ -295,7 +294,7 @@ class ServoPerControl(Law):
     drive is D = Z0(f) diag(10^(x / 20)) R: magnitudes from the servo, drive phases (and the shape
     across frequency) from the frozen inverse. Square setups only. kp defaults to 0 here: the
     single-shaker default of 0.3 made the per-control loops oscillate at a dwell on the
-    development 4 by 4 (MSN-T-03)."""
+    development 4 by 4."""
     name = 'servo_per_control'
     values = ('x_min_db', 'x_max_db', 'err_db')
 

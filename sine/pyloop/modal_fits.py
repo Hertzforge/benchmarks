@@ -1,26 +1,25 @@
-"""The modal-fit package's fits (MIMO Sine benchmark Package C, methods M7d and M9d), ported into the suite's harness
+"""The modal-fit package's fits (the MIMO Sine benchmark's modal-fit study, methods M7d and M9d), ported into the suite's harness
 so the candidates K3 and K4 can be built on them (`modal_fit: m7d`, `modal_fit: m9d`).
 
-Source: the research copy's `modal_fit/methods.py` at 99729b6 (branch research/msnb-modal-fit), functions
+Source: the modal-fit study's `methods.py` (research code, not published), functions
 `plscf_orders`, `_fz`, `_mac`, `stabilize_cluster`, `plscf_poles_cluster`, `octave_sub_bands`, `_in_band`,
 `_background`, `als`, `lsfd`, `contribution`, `m5` (with M7's orders), `variance_weights`, `_groups`, `_als_resid`,
 `refine_vp`, `rank_one_real`, `_delayed`, `_with_delay`. The arithmetic is unchanged line for line; what is left out is
 what M7 and M9 never reach (`als` without starting participations, `free_residues`, the other methods).
 
-One change, as the package recommends (C_Modal_Fit.md section 6): the delay is not estimated. Package C's M7d and M9d
+One change, as the study recommends: the delay is not estimated. The study's M7d and M9d
 estimate a pure delay from a complex fit's residue phases (`estimate_delay`, +-1 ms) and remove it before the real
 fit. Here the delay is the one the harness knows: the simulator block's own delay, which the law's identification
 holds (the exact small-signal response of the stepped structure, or an engine run's file turned back to it), set on it
 by the harness as `block_delay` (samples, fs; harness.py `block_delay_samples`, read from the structure file). It is
-taken out of the identification before the fit and put back on the residues after it, exactly as C's `_delayed` and
+taken out of the identification before the fit and put back on the residues after it, exactly as the study's `_delayed` and
 `_with_delay` do with an estimate. A fit asked for without a known delay is refused (ValueError): a real-residue fit
-of a delayed identification puts no mode within 10 percent (Package C, DNW-C11).
+of a delayed identification puts no mode within 10 percent (found in the study).
 
-Not the lag: the brief named `lag_frames` (less the pipeline, the harness's `gd_turn`) as the known delay. It is not
+Not the lag: `lag_frames` (less the pipeline, the harness's `gd_turn`) was once proposed was once proposed as the known delay. It is not
 the identification's delay. The engine's lag is the peak of a cross-correlation, so it carries the structure's
 response time as well: on frame-6x6-realistic s00 the lag less the pipeline is 8 samples and on frame-12x6 s00 14,
-where the block's delays are 2 and 4 and Package C's own estimate reads 2.0013 and 3.9404 (Package G,
-experiments/G/port_check.py, DNW-G1).
+where the block's delays are 2 and 4 and the study's own estimate reads 2.0013 and 3.9404.
 
 M7: half-octave pLSCF fit ranges overlapping a quarter octave each side; orders 12 to 24; poles kept by clustering
 over the orders (1 % in frequency, 25 % in damping, participation MAC 0.8, in at least half the orders); LSFD with
@@ -267,7 +266,7 @@ def contribution(ident, band, fit):
 
 
 def m7(ident, band, sub_bands=None, min_share=MIN_SHARE, real=True):
-    """Package C's M7 (methods.py `m5` with orders 12 to 24)."""
+    """The study's M7 (methods.py `m5` with orders 12 to 24)."""
     lam, Lf = plscf_poles_cluster(ident, band, orders=M7_ORDERS, sub_bands=sub_bands)
     fit = lsfd(ident, band, lam, Lf, real=real)
     for _ in range(3):

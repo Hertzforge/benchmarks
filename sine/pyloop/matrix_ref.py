@@ -1,4 +1,4 @@
-"""Reference composition of the `matrix` law for package M's parity vectors (outside the repository).
+"""Reference composition of the `matrix` law for the shipped laws' parity vectors (made outside the repository).
 
 K1m (SmoothedCarried, transport form) with the carry weight, the reset of the drive the controls
 cannot see on a wide setup (projection onto the row space of the model at the next frequency),

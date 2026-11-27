@@ -1,5 +1,5 @@
 """The law interface: what a multi-shaker sine law is built with, what it sees each update, and
-what it returns. It mirrors a proposed `sine-mimo` seam (Law_Interface_Proposal_2026-11-14.md),
+what it returns. It mirrors a proposed `sine-mimo` seam,
 following the conventions of the software's `sine-single` and `random-mimo` seams:
 
 - Complex amplitudes: a drive d_i(t) = Re{ D_i exp(j phi(t)) }, volts peak; a control's tracked

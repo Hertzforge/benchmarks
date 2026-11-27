@@ -802,7 +802,7 @@ class TestHarness(unittest.TestCase):
 
 
 class TestPipeline(unittest.TestCase):
-    """The runner's pipeline in the harness (Package F): each check is shown to fail on a case built to break it."""
+    """The runner's pipeline in the harness: each check is shown to fail on a case built to break it."""
 
     def case(self, test='T4'):
         from pyloop import harness as hz
@@ -924,7 +924,7 @@ class TestPipeline(unittest.TestCase):
 
 
 class TestCandidates(unittest.TestCase):
-    """The research round's candidates in the harness (Package F): each check is shown to fail on a case built to
+    """The research round's candidates in the harness: each check is shown to fail on a case built to
     break it."""
 
     def write_case(self, test='T1', law='k2f', params=None, rung=None):
@@ -1060,7 +1060,7 @@ def _synth_setup(idn, delay_samples):
 
 
 class TestModalFitM7d(unittest.TestCase):
-    """Package C's M7d and M9d in the harness, with the harness's known delay (Package G): each check is shown to fail
+    """The modal-fit study's M7d and M9d in the harness, with the harness's known delay: each check is shown to fail
     on a case built to break it."""
 
     def fit(self, which='m7d', delay=3.0, tau_given=None):
@@ -1073,7 +1073,7 @@ class TestModalFitM7d(unittest.TestCase):
         return out, tru, tau
 
     def test_the_port_is_package_cs_fit(self):
-        # Package C's own code wrote the vector on the same identifications (experiments/G/make_m7d_vector.py): the
+        # the modal-fit study's own code wrote the vector on the same identifications: the
         # synthetic one at noise 1e-3 and at 0.1 (where the clustering's MAC and share thresholds bind)
         from pyloop import modal_fits as MF
         import synth_modal as sy
@@ -1098,7 +1098,7 @@ class TestModalFitM7d(unittest.TestCase):
     @NEEDS
     def test_the_port_is_package_cs_fit_on_a_frame_band(self):
         # near-repeated modes of a frame: the harness's identification of frame-6x6-realistic_s00, 250 to 500 Hz, the
-        # block's delay given; Package C's own code wrote the vector (experiments/G/make_m7d_vector.py)
+        # block's delay given; the modal-fit study's own code wrote the vector
         from pyloop import harness as hz
         from pyloop import modal_fits as MF
         with open(os.path.join(HERE, 'data', 'm7d_parity.json')) as fh:
@@ -1182,7 +1182,7 @@ class TestModalFitM7d(unittest.TestCase):
         from pyloop import harness as hz
         self.assertEqual(hz.CANDIDATES['k3'][1]['modal_fit'], 'm7d')
         self.assertEqual(hz.CANDIDATES['k4'][1]['modal_fit'], 'm7d')
-        self.assertEqual(hz.CANDIDATES['k2f'][1]['modal_fit'], 'current')      # the brief changes K3 and K4 only
+        self.assertEqual(hz.CANDIDATES['k2f'][1]['modal_fit'], 'current')      # the default changes K3 and K4 only
         from pyloop import modal
         self.assertIn('m7d', modal.MODAL_FITS)
         self.assertIn('m9d', modal.MODAL_FITS)

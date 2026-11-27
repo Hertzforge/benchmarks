@@ -7,7 +7,7 @@ nothing by itself: `start` is the only command that runs a batch.
     python3 sine/batch_agent.py status --label <label>
     python3 sine/batch_agent.py stop --label <label>              (launchctl bootout: the batch and every run it started)
 
-Why launchd (study guide, "Run Time"): on the Mac mini a process started from a Claude Code session runs at priority 20
+Why launchd: on the Mac mini a process started in the background of an interactive session runs at priority 20
 and, with many runners going, gets about half a core; a launchd agent loaded from a plist with ProcessType Interactive
 runs at the normal 31. The numbers a run gives do not depend on it. A launchd job may not read a network folder, so
 the agent runs sine/batch.py from the folder this file is in, which must be on a local disk (the frozen copy of the

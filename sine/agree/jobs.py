@@ -1,4 +1,4 @@
-"""The agreement sample and the timing pilot as job lists for drive.py (Package D of the MIMO Sine benchmark).
+"""The agreement sample and the timing pilot as job lists for drive.py (the MIMO Sine benchmark's agreement work).
 
     python3 sine/agree/jobs.py agreement --problems <problems> --base <folder> --runner <msnb_run>
     python3 sine/agree/jobs.py pilot     --problems <problems> --base <folder> --runner <msnb_run>
@@ -8,7 +8,7 @@ record: `protective` "widened", and `reference.phase` "specified" for a law that
 steepest_descent, secant) and "auto" for the amplitude-only laws (paired, ratio). Nothing else changes (the noise
 seed is the case's: one per problem and test, the same for every law). Cases go to <base>/cases/<problem>/.
 
-The drive gain (FORMAT_SINE.md section 7): the runner at 572ca47d refuses `drives.gain`. Every job here therefore
+The drive gain (FORMAT_SINE.md section 7): the runner the agreement ran refuses `drives.gain`. Every job here therefore
 runs the gain-free equivalent (<base>/cases_gainfree/): no gain, the ceiling in the structure's volts,
 min(9 V, gain x 1.99526231 V). Gain and ceiling scale together, and the engine sets its identification from the
 ceiling (the probe) and the reference (the measured shot), so the two are the same run wherever gain x 1.995 V is
@@ -22,10 +22,10 @@ agreement: the systems within the engine's limits (frame-6x6, frame-12x6, frame-
   small-signal response), py_given (the harness handed hf_own's law_identification.f8, --ident), py_mguard (the
   harness's law on its exact response, its guards on hf_own's measured file, --guard-ident: what the runner does with
   --ideal-frf, so the pair hf_ideal / py_mguard compares the loops on the same law model and the same guards).
-pipeline: the agreement redone with the harness's pipeline (its default since Package F; the earlier arms ran without
+pipeline: the agreement redone with the harness's pipeline (its default since 9efb035; the earlier arms ran without
   it): py_mguard_p and py_given_p on the 110 cases the gain does not change (the gain-free case, against hf_own's
   file), py_mguard_pg and py_given_pg on the 22 it changes (the case with its gain, against hf_own_g's file), so the
-  sets of record pair them with hf_ideal / hf_own and hf_ideal_g / hf_own_g as Package D's final_sets.py does. Reads
+  sets of record pair them with hf_ideal / hf_own and hf_ideal_g / hf_own_g as the agreement's final sets do. Reads
   <base>/changed_by_gain.json and the case files the agreement set wrote; runs nothing on the runner.
 pilot: the Hertzforge version on the systems within the limits, every tier, s00: matrix on every test the problem
   built (T1 to T5, L1), the other laws on T3 and T4; and two block D structures (frame-6x6 and frame-12x6,

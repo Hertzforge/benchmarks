@@ -1,22 +1,21 @@
-"""K4, the level ladder: the research testbed's law (the msine-research testbed, drafts/D2/k4_ladder.py, package D2; catalog
-`Candidate_Laws.md` K4) ported to the suite's law interface (Package F of the MIMO Sine benchmark). The testbed's
+"""K4, the level ladder: the research testbed's law (its draft `k4_ladder.py`; catalog
+entry K4) ported to the suite's law interface. The testbed's
 text follows. Changes, each a no-op on a testbed setup with `truth` given:
   - imports from the suite's pyloop;
   - the model: the testbed's draft refuses to build without `truth` (study only). Here, without `truth`, the model is
     the law's own modal fit of the identification, chosen by `modal_fit` ('current': `modal.ModalForm.fit`, the fit
     the research round has; the modal-fit package's fit is plugged in under another name when it reports). The
     fitted residues are made rank one (the dominant singular pair, as the testbed's own residue check did:
-    drafts/D2/k4_failures.py `shapes_from_ident`), and the model keeps the identification's remainder (smoothed, as
+    its draft `k4_failures.py`, `shapes_from_ident`), and the model keeps the identification's remainder (smoothed, as
     the carried laws' modal form does) so it equals the identification at low level: `FittedModalModel`;
   - the fit's pairing of a reading with an earlier drive reads the tracker's delay and the transport delay as the
     suite's laws do (`laws_baselines.tracker_delay` + the setup's `transport_delay_s`; the testbed's 2 / (2 pi B)
     by default).
 Passes: a pass is a run of updates at one scheduled level. Under the suite's ladder of 2 s rungs at the start of the
 test a pass covers a few seconds of the band; the law's passes over the modes need a ladder of whole sweeps
-(the harness's `ladder.rung.sweeps`). The port is checked against the testbed's own class on testbed cases
-(07_Research/MIMO_Sine_Benchmark/experiments/F/port_check.py).
+(the harness's `ladder.rung.sweeps`). The port was checked against the testbed's own class on testbed cases.
 
-K4, the level ladder (catalog entry K4, components G1 and G8; package D2 draft).
+K4, the level ladder (catalog entry K4, components G1 and G8).
 
 Low-level passes come before the full-level pass. After each pass the law fits, from the pass's
 own record (operating drives and tracked controls along the sweep), each mode's frequency, damping

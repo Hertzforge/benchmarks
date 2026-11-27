@@ -1,6 +1,6 @@
-"""A small synthetic identification for the modal-fit tests (Package G): real rank-one modes in the testbed's q form,
+"""A small synthetic identification for the modal-fit tests: real rank-one modes in the testbed's q form,
 a smooth background, a pure delay and seeded noise, on 0.25 Hz lines. Shared by the tests and by the script that wrote
-the parity vector from Package C's own code (`07_Research/MIMO_Sine_Benchmark/experiments/G/make_m7d_vector.py`), so
+the parity vector from the modal-fit study's own code (not published), so
 both fit the same numbers."""
 import os
 import sys

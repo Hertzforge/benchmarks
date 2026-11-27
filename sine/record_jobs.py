@@ -12,7 +12,7 @@ batch.py command that runs it (`--cases <base>/<set>/cases --jobs <base>/<set>/j
                    amplitude-only laws (paired, ratio); the case's drive gain and its ceiling 6 dB over the ideal drive
                    (Plan 2026-11-25 section 10). Everything else is the case's own (its noise seed: one per problem and
                    test, the same for every law).
-  study_defaults   the default check (study guide item 9): the systems 12x6 and 6x6, every tier, the study's first two
+  study_defaults   the default check: the systems 12x6 and 6x6, every tier, the study's first two
                    structures (seeds 0 and 1), every job of each, at the engine's protective defaults ("default") and its
                    default 9 V ceiling (the case's ceiling left out, so the runner's default holds), the gain kept.
   study_repeat_<k> the repeat set (item 11), k = 1, 2, 3: twenty cases, the runs of record's settings, each with a
@@ -27,7 +27,7 @@ batch.py command that runs it (`--cases <base>/<set>/cases --jobs <base>/<set>/j
                    the Python version (sine/plan.py's VERSIONS, run by sine/pyloop/harness.py): K3, admitted after the
                    screen (Kevin, 2026-11-25: "Include K3"), and matrix on exactly the same cases (T1, T2, T5, L1). A K3
                    case is the problem's own matrix case with the law set to k3 and nothing else changed (its noise seed
-                   and identification seed are matrix's), as the screen built them (experiments/G/screen_jobs.py); the
+                   and identification seed are matrix's), as the screen built them; the
                    Python matrix case is the Hertzforge set's matrix case, byte for byte. The default check and the
                    repeat sets as above, except that a Python repeat set is every Python job on the two structures (K3
                    takes no T3 or T4). The Python harness builds its law on the exact small-signal response, so its

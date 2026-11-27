@@ -11,9 +11,9 @@ Blocks (Plan 2026-11-25 sections 2 and 8):
 A job is (problem, test, law) for every test the law's manifest accepts and the problem built (T5: block A only, and
 only when the problem files say it was built).
 
-Two versions (Plan section 9). The Hertzforge version (the runner on the shipped engine, the runs of record) runs the
+Two versions. The Hertzforge version (the runner on the shipped engine, the runs of record) runs the
 five shipped laws. The Python version (sine/pyloop/harness.py) runs K3, the followed poles on the M7d fit, admitted
-after the screen by Kevin's decision of 2026-11-25 ("Include K3"; G_Screen.md), on every case its brief allows (it
+after the screen by Kevin's decision of 2026-11-25 ("Include K3"), on every case the screen allowed (it
 takes sweeps: T1, T2, T5 and the limit block's L1, on blocks A, D and L as the problem built them), and `matrix` on
 exactly the same cases, so a paired law difference never mixes versions. Each version is its own set of jobs.
 """

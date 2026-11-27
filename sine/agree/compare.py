@@ -1,5 +1,5 @@
 """Compare two MIMO Sine runs of the same case by what the scorer reads: their cards, reading by reading, against
-the agreement criteria (07_Research/MIMO_Sine_Benchmark/D_Agreement.md section 3, fixed before any run).
+the agreement criteria (`RULES` below, fixed before any run).
 
     python3 sine/agree/compare.py pair <run folder A> <run folder B>             # one pair, printed
     python3 sine/agree/compare.py set <base> <arm A> <arm B> --out <report.json>  # every case two arms share
@@ -29,7 +29,7 @@ SKIP = re.compile(r'^(schema|scorer|run|batch|problem|practice\.departures)(\.|$
                   r'composite|between_points|analogy|coverage_what|held_from|effort_what|message|tolerances?|rate_tolerance|'
                   r'duration_tolerance)(\.|$)|\.(clause|status|what)$')
 DB = 'db'
-# (pattern, kind, tolerance): section 3 of D_Agreement.md
+# (pattern, kind, tolerance): the agreement criteria
 RULES = [
     (r'^completion\.(outcome|guard)$', 'equal', None),
     (r'^scored$', 'equal', None),

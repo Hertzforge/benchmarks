@@ -5,8 +5,8 @@
     python sine/make_claims.py check    --claims claims.json --readings audit.csv --out verdicts.csv   # the audit's test
     python sine/make_claims.py add      --claims claims.json --text "..."            # a claim in words, stamped with its time
 
-The rule was fixed on 2026-11-25, before any study table existed (brief MIMO_Sine_Benchmark_H_Freeze_Prep.md, Part 2;
-in words in 07_Research/MIMO_Sine_Benchmark/H_Claims_Rule.md). The pattern is the three-law study's make_claims.py
+The rule was fixed on 2026-11-25, before any study table existed; this
+docstring states it in words. The pattern is the three-law study's make_claims.py
 (Hertzforge Journal 2026-011).
 
 Readings (the primary three, one value a run, from the scorer's card):
@@ -71,8 +71,8 @@ WORDS = {'iec_share': 'share of the test inside the IEC check-point band at full
 LINES = ('iec_check_point', 'iec_reference_point', 'mil_composite', 'mil_average_individual', 'mil_maxi_individual')
 LAW_ORDER = ('matrix', 'paired', 'ratio', 'steepest_descent', 'secant')
 VERSIONS = ('hertzforge', 'python')
-ADMITTED_AFTER_SCREEN = {'k3': 'admitted to the study after the screen, by Kevin\'s decision of 2026-11-25 ("Include K3"; '
-                               'DECISIONS.md, G_Screen.md): post hoc, its claims tested on the held-back structures'}
+ADMITTED_AFTER_SCREEN = {'k3': 'admitted to the study after the screen, by Kevin\'s decision of 2026-11-25 ("Include K3"): '
+                               'post hoc, its claims tested on the held-back structures'}
 EFFECTS = (('realistic', 'linear'), ('strong', 'realistic'), ('strong', 'linear'))
 SID = re.compile(r'^frame-(?P<system>\d+x\d+)(?:-(?P<tier>realistic|strong))?(?:_(?P<effect>soft|hard))?_s(?P<seed>\d+)$')
 COLUMNS = (['version', 'structure', 'system', 'kind', 'seed', 'test', 'law', 'outcome', 'scored'] + list(READINGS)
@@ -333,7 +333,7 @@ def cmd_claims(a):
     rows = load_readings(a.readings)
     claims = the_claims(rows)
     doc = dict(schema=SCHEMA, rule=dict(file='sine/make_claims.py', sha256=sha256(os.path.abspath(__file__)),
-                                        thresholds=THRESHOLD, words='07_Research/MIMO_Sine_Benchmark/H_Claims_Rule.md'),
+                                        thresholds=THRESHOLD, words='sine/make_claims.py (its docstring)'),
                readings=dict(file=os.path.basename(a.readings), sha256=sha256(a.readings), runs=len(rows)),
                claims=claims, late=[])
     with open(a.out, 'w') as f:

@@ -1,6 +1,6 @@
-"""D1 modal laws: K2 (centred model), K2f (family inverse, closely spaced) and K3 (followed poles)
-with the prediction gate G2, all in the carried loop of K1 (catalog K2, K2f, K3, G2; Derivations
-LD-2 amendment and LD-3 amendment). NumPy only. Depends on the sibling draft k1_carried_inverse.py
+"""The research round's modal laws: K2 (centred model), K2f (family inverse, closely spaced) and K3 (followed poles)
+with the prediction gate G2, all in the carried loop of K1 (catalog K2, K2f, K3, G2).
+NumPy only. Depends on carried.py
 for the carried loop (the only dependency outside the testbed's interface).
 
 Notation (one per file):
@@ -68,7 +68,7 @@ class ModalForm:
     def smooth_base(self, span_lines=8):
         """Replace the identification under the modal form by its modal part plus the remainder
         smoothed over +-span_lines (local quadratic). The remainder is smooth in truth; the
-        identification's line-to-line scatter is not, and a carried drive follows it (MSN-D1-01
+        identification's line-to-line scatter is not, and a carried drive follows it (a research-round
         probe: 1 to 4 percent scatter took K1 from 6 to 13 times better than P1 to worse than P1)."""
         g = self.ident.grid_hz
         Q = q_full(g, self.f0, self.z0) if self.M else np.zeros((g.size, 0))
@@ -225,9 +225,9 @@ def _fit_group(gg, HH, fr, zr, iters=40):
 _FIT_CACHE = {}
 
 
-# The modal fits a law can be built on, by name (the suite's switch, Package F). 'current': the research round's fit
+# The modal fits a law can be built on, by name (the suite's switch). 'current': the research round's fit
 # (ModalForm.fit, peak picking and a local least-squares fit of each group). 'm7d' and 'm9d': the modal-fit package's
-# M7d and M9d with the harness's known delay (modal_fits.py, Package G), added at the end of this file. A law's
+# M7d and M9d with the harness's known delay (modal_fits.py), added at the end of this file. A law's
 # `modal_fit` parameter chooses.
 MODAL_FITS = {'current': lambda ident, band: ModalForm.fit(ident, band)}
 
@@ -684,6 +684,6 @@ REGISTRY = {
 }
 
 
-# the modal-fit package's fits (Package G): imported last, as modal_fits.py reads ModalForm and q_full from here and
+# the modal-fit study's fits: imported last, as modal_fits.py reads ModalForm and q_full from here and
 # adds its fits to MODAL_FITS itself (so either module may be imported first)
 from . import modal_fits as _package_c_fits  # noqa: E402,F401

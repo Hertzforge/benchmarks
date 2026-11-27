@@ -1,5 +1,5 @@
 {
- "what": "Package C methods.py at 99729b6 on sine/tests/synth_modal.identification(), the delay given",
+ "what": "the modal-fit study's methods.py on sine/tests/synth_modal.identification(), the delay given",
  "interpreter": "3.12.16",
  "numpy": "2.5.4",
  "tau_s": 0.0003662109375,

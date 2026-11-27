@@ -7,7 +7,7 @@
     python sine/heldout/gen_heldout.py sine    --root <heldout folder> [--workers 3] # the MIMO Sine problems and cases
     python sine/heldout/gen_heldout.py plan    --root <heldout folder>              # structures.txt and jobs.json
 
-The rule (Plan 2026-11-25 section 2, brief H): seeds 90 to 99; a seed whose member the Random generator cannot place
+The rule (fixed before the study ran): seeds 90 to 99; a seed whose member the Random generator cannot place
 (generator/obs_gen2.py choose_member gives no candidate) is replaced in order from 100 up, and the dropped seed is
 reported and not counted. A structure that a generation check refuses (the export's frequency bound, the stager, the
 sine maker's checks) is reported and not counted; it is not replaced.
