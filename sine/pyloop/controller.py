@@ -1,0 +1,358 @@
+"""The controller's side of a multi-shaker sine loop.
+
+Each update interval (dt_c, a whole number of samples): the tone advances (the controller's
+schedule), the drive vector D moves linearly from the drive in force to the new drive across the
+interval, each drive plays d_i = Re{D_i exp(j phi)}, the structure is stepped (or, on the fast
+path, solved quasi-statically), measurement noise is added, and the tracking filters give C and
+L at the end of the interval. The law is then called and its answer passes the guards, in this
+order: output checks (shape, finite; a refused answer is a miss and the drive in force is held),
+the first-drive limit (engage only), the change cap per drive (dB down, dB and dB/s up; optional
+phase cap), the drive ceiling per shaker (each drive clamped, phase kept; a law that asked for
+more is counted), and the backstop notch (when a limit channel's predicted amplitude would pass
+its bound, the whole drive vector is scaled down, direction kept). Then the alarm and abort bands
+are judged, and the divergence stop (a cap binding without a break for divergence_s).
+
+Here (the suite's copy of the research testbed's controller) only the quasi-steady loop is kept: it is what the
+shipped laws' parity vectors were made with (pyloop/parity.py). The time-domain loop of the suite is
+pyloop/harness.py, which follows the shipped engine's schedule and guards rather than this one's.
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field, asdict
+
+import numpy as np
+
+from .interface import Setup, TickIn, TickOut, reg_pinv
+from .structures import TWO_PI
+
+
+@dataclass
+class Guards:
+    max_step_db: float = 1.0            # per update, either way, per drive magnitude
+    max_rise_db_per_s: float = 240.0
+    phase_step_deg: float | None = None  # per update, per drive; None = off (a question for the seam)
+    divergence_s: float = 1.0
+    first_drive_db: float = 6.0
+    law_misses: int = 3
+    alarm_db: float = 3.0
+    abort_db: float | None = 12.0       # None = no abort on the controls
+    abort_updates: int = 3              # consecutive judged updates outside the abort band
+    notch: bool = True
+    notch_smoothing: float = 3.0        # updates
+    limit_abort_db: float | None = 6.0  # a limit channel this far over its bound ends the run
+    change_caps: bool = True
+    ceiling_on: bool = True
+    divergence_on: bool = True
+    honour_requests: bool = False
+    max_hold_s: float = 2.0
+    min_slow_factor: float = 0.1
+
+
+@dataclass
+class Config:
+    fs: float = 16384.0
+    dt_c: float = 0.01
+    tracking: dict = field(default_factory=lambda: dict(mode='proportional', pct=10.0, max_hz=20.0))
+    noise_rms: float = 0.0              # g rms added to every output, white
+    engage_settle_s: float = 0.3
+    level_settle_s: float = 0.5
+    guards: Guards = field(default_factory=Guards)
+    fast: bool = False                  # quasi-steady fast path
+    max_updates: int = 10_000_000
+
+
+def tracking_bw(tr, f):
+    f = np.asarray(f, float)
+    if tr['mode'] == 'fixed':
+        b = np.full_like(f, tr['hz'])
+    else:
+        b = np.minimum(f * tr['pct'] / 100.0, tr['max_hz'])
+    return np.minimum(b, 0.5 * f)
+
+
+class QuasiSteadyLoop:
+    """The fast path: the structure in steady state at the frequency of the interval's end, a
+    fixed point on the modes' envelopes for a rule-based structure (continued from the last
+    update, so a branch is followed), and a first-order lag of time constant 2 / (2 pi B) standing
+    in for the two-pole tracking filter. Directly integrated nonlinearities are not supported."""
+
+    def __init__(self, st, cfg, actuator, rng):
+        if st.nonlinear:
+            raise NotImplementedError('the fast path does not model directly integrated nonlinearities')
+        self.st = st
+        self.cfg = cfg
+        self.act = actuator
+        self.rng = rng
+        self.rows = np.concatenate([st.rows('control'), st.rows('limit')])
+        self.n = st.n
+        self.env = np.zeros(st.n_modes)
+        self.z = np.zeros(self.rows.size, complex)
+        self.delay = st.transport_delay_samples
+
+    def true_response(self, f, D):
+        st = self.st
+        A = np.ones(st.m) if self.act is None else self.act.frf([f])[0]
+        Dp = A * D * np.exp(-1j * TWO_PI * f * self.delay / self.cfg.fs)
+        u = st.drive_shape @ Dp
+        w = TWO_PI * f
+        e = self.env.copy()
+        for it in range(60):
+            fn, zn = st.level_state(e / st.reference_amplitude) if st.rules is not None else (st.f_hz, st.zeta)
+            wn = TWO_PI * fn
+            x = u / (wn ** 2 - w ** 2 + 2j * zn * wn * w)
+            e_new = np.abs(x) * np.maximum(1.0, w / wn)
+            if st.rules is None:
+                e = e_new
+                break
+            if np.max(np.abs(e_new - e) / np.maximum(e_new, 1e-300)) < 1e-10:
+                e = e_new
+                break
+            e = 0.5 * e + 0.5 * e_new
+        self.env = e
+        y = (st.output_shape[:, self.rows].T @ (-(w ** 2) * x))
+        if st.feedthrough:
+            y = y + st.feedthrough * Dp.sum()
+        if st.residual is not None:
+            y = y + st.residual[self.rows] @ Dp
+        return y
+
+    def interval(self, D0, D1, f, phi):
+        fe = float(f[-1])
+        yt = self.true_response(fe, D1)
+        B = float(tracking_bw(self.cfg.tracking, fe))
+        a = 1.0 - np.exp(-self.cfg.dt_c * TWO_PI * B / 2.0)
+        self.z = self.z + a * (yt - self.z)
+        out = self.z
+        if self.cfg.noise_rms:
+            sd = self.cfg.noise_rms * np.sqrt(np.pi * B / self.cfg.fs)
+            out = out + sd * (self.rng.normal(size=out.size) + 1j * self.rng.normal(size=out.size))
+        return out[:self.n], out[self.n:]
+
+    def ratio(self):
+        if self.st.reference_amplitude is None:
+            return np.full(self.st.n_modes, np.nan)
+        return self.env / self.st.reference_amplitude
+
+
+@dataclass
+class RunResult:
+    arrays: dict
+    end: str
+    end_detail: dict
+    counts: dict
+    wall_s: float
+    setup: Setup
+    meta: dict
+
+
+def _db(x):
+    return 20.0 * np.log10(np.maximum(np.abs(x), 1e-300))
+
+
+def run(st, tone, law_cls, law_params, setup: Setup, cfg: Config, R_fun, limit_fun=None, actuator=None, seed=0,
+        record_ratio=True):
+    """Run one test. tone: a Tone (the schedule). law_cls(setup, **law_params). R_fun(f): the
+    full-level reference (n,). limit_fun(f): the limit bounds (p,) (default from setup.limit_grid)."""
+    t_wall = time.perf_counter()
+    g = cfg.guards
+    rng = np.random.default_rng([seed, 9101])
+    if actuator is not None:
+        actuator.reset()
+    if not cfg.fast:
+        raise NotImplementedError('the time-domain loop is the harness\'s own (pyloop/harness.py); run() keeps the '
+                                  'quasi-steady loop the parity vectors were made with')
+    loop = QuasiSteadyLoop(st, cfg, actuator, rng)
+    N = int(round(cfg.dt_c * cfg.fs))
+    dt = N / cfg.fs
+    n, m, p = st.n, st.m, st.p
+    ceiling = np.asarray(setup.drive_ceiling, float)
+    law = law_cls(setup, **law_params)
+    rec = {k: [] for k in ('t', 'f', 'level', 'R', 'C', 'L', 'D', 'D_law', 'capped', 'ceil', 'notch', 'miss',
+                           'hold', 'settle', 'sweep', 'request', 'ratio')}
+    vals = {}
+    counts = dict(misses=0, capped=0, ceiling=0, notch=0, over_ceiling_asked=0, refused_shape=0,
+                  refused_nonfinite=0, law_exceptions=0, requests=0, requests_honoured=0, alarm=0)
+    kappa = np.full(p, np.nan)
+    a_notch = 1.0 - np.exp(-1.0 / g.notch_smoothing)
+    D_force = np.zeros(m, complex)
+    C = np.zeros(n, complex); Lm = np.zeros(p, complex)
+    misses = 0
+    cap_run = 0
+    abort_run = 0
+    hold_req, slow = False, 1.0
+    hold_time = 0.0
+    notch_scale = 1.0
+    hold_reason = 'engage'
+    end, detail = 'completed', {}
+    settle_until = cfg.engage_settle_s
+    last_level = tone.level_db()
+    k = 0
+    while True:
+        f = tone.f
+        lev_db = tone.level_db()
+        if abs(lev_db - last_level) > 1e-6:
+            settle_until = max(settle_until, tone.t + cfg.level_settle_s)
+            last_level = lev_db
+        lev = 10.0 ** (lev_db / 20.0)
+        R = lev * np.asarray(R_fun(f), complex)
+        lim = np.asarray(limit_fun(f), float) if limit_fun is not None else (
+            setup.ident._interp(setup.limit_grid, f).real if p else np.zeros(0))
+        settle = tone.settle_open or tone.t < settle_until
+        hz_s, oct_min = tone.sweep_rate() if k else (0.0, 0.0)
+        x = TickIn(k=k, dt=0.0 if k == 0 else dt, f=f, sweep_hz_s=hz_s, sweep_oct_min=oct_min, level=lev, R=R.copy(),
+                   C=C.copy(), L=Lm.copy(), D_in_force=D_force.copy(), hold=hold_reason, notch_scale=notch_scale,
+                   limit_bounds=lim.copy(), settle_open=bool(settle))
+        # ---- call the law
+        out, ok, why = None, True, ''
+        try:
+            out = law.engage(x) if k == 0 else law.tick(x)
+            Dl = np.asarray(out.D)
+            if Dl.shape != (m,):
+                ok, why = False, 'shape'; counts['refused_shape'] += 1
+            elif not np.all(np.isfinite(Dl)) or not all(np.isfinite(v) for v in (out.values or {}).values()):
+                ok, why = False, 'nonfinite'; counts['refused_nonfinite'] += 1
+        except Exception as exc:                                    # a failed call is a miss
+            ok, why = False, 'exception'; counts['law_exceptions'] += 1
+            detail.setdefault('first_exception', repr(exc))
+        if ok:
+            misses = 0
+            D_new = Dl.astype(complex)
+            for kk, vv in (out.values or {}).items():
+                vals.setdefault(kk, [np.nan] * k).append(float(vv))
+        else:
+            misses += 1
+            counts['misses'] += 1
+            D_new = D_force.copy()
+            if misses >= g.law_misses:
+                end, detail = 'law_fault', dict(f=f, level_db=lev_db, why=why)
+        for kk in vals:
+            if len(vals[kk]) < k + 1:
+                vals[kk].append(np.nan)
+        D_law = D_new.copy()
+        # ---- requests
+        req = out.request if (ok and out is not None) else None
+        hold_req, slow = False, 1.0
+        if req is not None:
+            counts['requests'] += 1
+            if g.honour_requests:
+                if req == 'hold' and hold_time < g.max_hold_s:
+                    hold_req = True; counts['requests_honoured'] += 1
+                elif isinstance(req, tuple) and req[0] == 'slow':
+                    slow = float(np.clip(req[1], g.min_slow_factor, 1.0)); counts['requests_honoured'] += 1
+        hold_time = hold_time + dt if hold_req else 0.0
+        # ---- guards
+        capped = False
+        if k == 0:
+            P = reg_pinv(setup.ident.H0_at(f)) @ R
+            if setup.ident.trust_at(f):
+                lim0 = np.linalg.norm(P) * 10 ** (g.first_drive_db / 20.0)
+            else:
+                lim0 = 0.05 * lev * np.linalg.norm(ceiling)
+            nD = np.linalg.norm(D_new)
+            if nD > lim0:
+                D_new *= lim0 / nD
+                capped = True
+        elif g.change_caps:
+            a0 = np.abs(D_force)
+            a1 = np.abs(D_new)
+            up = min(g.max_step_db, g.max_rise_db_per_s * dt)
+            act = a0 > 1e-12 * max(1.0, ceiling.max())
+            with np.errstate(divide='ignore', invalid='ignore'):
+                stp = np.where(act & (a1 > 0), _db(a1) - _db(a0), np.where(act, -np.inf, 0.0))
+            hi = act & (stp > up + 1e-9)
+            lo = act & (stp < -(g.max_step_db + 1e-9))
+            if np.any(hi | lo):
+                capped = True
+                ph = np.where(a1 > 0, D_new / np.maximum(a1, 1e-300), D_force / np.maximum(a0, 1e-300))
+                D_new = np.where(hi, a0 * 10 ** (up / 20.0) * ph, D_new)
+                D_new = np.where(lo, a0 * 10 ** (-g.max_step_db / 20.0) * ph, D_new)
+            if g.phase_step_deg is not None:
+                dph = np.angle(D_new * np.conj(D_force))
+                big = act & (np.abs(dph) > np.deg2rad(g.phase_step_deg))
+                if np.any(big):
+                    capped = True
+                    lim_ph = np.sign(dph) * np.deg2rad(g.phase_step_deg)
+                    D_new = np.where(big, np.abs(D_new) * np.exp(1j * (np.angle(D_force) + lim_ph)), D_new)
+        ceil_hit = False
+        if g.ceiling_on:
+            a1 = np.abs(D_new)
+            if np.any(np.abs(D_law) > ceiling * (1 + 1e-12)):
+                counts['over_ceiling_asked'] += 1
+            over = a1 > ceiling
+            if np.any(over):
+                ceil_hit = True
+                counts['ceiling'] += 1
+                D_new = np.where(over, D_new * ceiling / np.maximum(a1, 1e-300), D_new)
+        notch_scale = 1.0
+        hold_reason = 'held' if hold_req else ('engage' if tone.t + dt < cfg.engage_settle_s else 'free')
+        if p and g.notch:
+            T0 = setup.ident.T0_at(f)
+            pf = np.abs(T0 @ D_force)
+            fresh = (pf > 1e-12) & (k > 0)
+            sample = np.where(fresh, np.abs(Lm) / np.maximum(pf, 1e-300), np.nan)
+            seedk = fresh & ~np.isfinite(kappa)
+            kappa = np.where(seedk, sample, kappa)
+            upd = fresh & ~seedk
+            kappa = np.where(upd, kappa + a_notch * (sample - kappa), kappa)
+            kap = np.where(np.isfinite(kappa), kappa, 1.0)
+            pred = kap * np.abs(T0 @ D_new)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                sc = np.where((pred > 0) & np.isfinite(lim) & (lim > 0), lim / pred, np.inf)
+            s_min = float(np.min(sc)) if sc.size else np.inf
+            if s_min < 1.0:
+                notch_scale = s_min
+                D_new = D_new * s_min
+                counts['notch'] += 1
+                hold_reason = 'notch'
+        if capped:
+            counts['capped'] += 1
+            cap_run += 1
+        else:
+            cap_run = 0
+        if g.divergence_on and k > 0 and cap_run * dt >= g.divergence_s and end == 'completed':
+            end, detail = 'divergence', dict(f=f, level_db=lev_db)
+        # ---- record this update (the measurement it saw and the drive it set)
+        rec['t'].append(tone.t); rec['f'].append(f); rec['level'].append(lev); rec['R'].append(R); rec['C'].append(C)
+        rec['L'].append(Lm); rec['D'].append(D_new.copy()); rec['D_law'].append(D_law); rec['capped'].append(capped)
+        rec['ceil'].append(ceil_hit); rec['notch'].append(notch_scale); rec['miss'].append(not ok)
+        rec['hold'].append(hold_reason); rec['settle'].append(bool(settle)); rec['sweep'].append(oct_min)
+        rec['request'].append(repr(req) if req is not None else '')
+        rec['ratio'].append(loop.ratio() if record_ratio else np.zeros(0))
+        # ---- judge the controls and the limits (what the law just saw)
+        if k > 0 and not settle and end == 'completed':
+            err = np.abs(_db(C) - _db(R))
+            if np.any(err > g.alarm_db):
+                counts['alarm'] += 1
+            if g.abort_db is not None and np.any(err > g.abort_db):
+                abort_run += 1
+                if abort_run >= g.abort_updates:
+                    worst = int(np.argmax(err))
+                    end, detail = 'abort_control', dict(f=f, level_db=lev_db, control=worst,
+                                                        err_db=float(_db(C[worst]) - _db(R[worst])))
+            else:
+                abort_run = 0
+            if p and g.limit_abort_db is not None:
+                over = _db(Lm) - _db(np.where(np.isfinite(lim), lim, np.inf))
+                if np.any(over > g.limit_abort_db):
+                    end, detail = 'abort_limit', dict(f=f, level_db=lev_db, channel=int(np.argmax(over)),
+                                                      over_db=float(np.max(over)))
+        if end != 'completed' or tone.done or k >= cfg.max_updates:
+            if tone.done and end == 'completed':
+                detail = dict(f=f, level_db=lev_db)
+            break
+        # ---- play the interval
+        fN, phiN = tone.advance(N, hold=hold_req, factor=slow)
+        C, Lm = loop.interval(D_force, D_new, fN, phiN)
+        D_force = D_new
+        k += 1
+    arrays = {kk: np.asarray(v) for kk, v in rec.items() if kk not in ('hold', 'request')}
+    arrays['hold'] = np.asarray(rec['hold'], dtype='U5')
+    arrays['request'] = np.asarray(rec['request'], dtype='U40')
+    for kk, v in vals.items():
+        arrays['val_' + kk] = np.asarray(v[:len(rec['t'])], float)
+    meta = dict(law=getattr(law, 'name', law_cls.__name__), law_params={kk: repr(v) for kk, v in law_params.items()},
+                structure=st.name, seed=seed, config=dict(fs=cfg.fs, dt_c=cfg.dt_c, tracking=cfg.tracking,
+                                                          noise_rms=cfg.noise_rms, fast=cfg.fast, guards=asdict(g)),
+                updates=len(rec['t']))
+    return RunResult(arrays, end, detail, counts, time.perf_counter() - t_wall, setup, meta)
