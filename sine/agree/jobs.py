@@ -3,7 +3,7 @@
     python3 sine/agree/jobs.py agreement --problems <problems> --base <folder> --runner <msnb_run>
     python3 sine/agree/jobs.py pilot     --problems <problems> --base <folder> --runner <msnb_run>
 
-Each case is the suite's own case file (<problem>/cases/<test>__<law>.json) with the lead's defaults for runs of
+Each case is the suite's own case file (<problem>/cases/<test>__<law>.json) with the defaults of the runs of
 record: `protective` "widened", and `reference.phase` "specified" for a law that takes a phase (matrix,
 steepest_descent, secant) and "auto" for the amplitude-only laws (paired, ratio). Nothing else changes (the noise
 seed is the case's: one per problem and test, the same for every law). Cases go to <base>/cases/<problem>/.

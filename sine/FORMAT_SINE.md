@@ -35,7 +35,7 @@ T3 and T4; `steepest_descent` and `secant` T4. That is 4,140 jobs (`plan.py`).
 
 The shipped MIMO Sine engine takes at most 16 controls and 8 drives. The 12x24 rig (24 controls,
 12 drives) and the 12x12 rig (12 drives) are over those limits. Their problems are made and
-`checks.engine.within_channel_limits` says so; whether they are run is the lead's decision.
+`checks.engine.within_channel_limits` says so.
 
 ## 2. A Problem Folder
 
